@@ -47,14 +47,43 @@
 
 - 不做界面。M2 才有 Tauri + React。
 - 不做文件优先级、限速策略、代理、WebSeed、RSS、做种规则。
-- 不做 HTTPS tracker 与 SSL peer —— 当前 libtorrent 无 OpenSSL，见「未验证」。
+- 不做 HTTPS tracker 与 SSL peer —— 当前 libtorrent 无 OpenSSL，实测后果见「环境依赖验证」。
 - 不做多用户、远程访问、TLS。接口只在本机回环可用，这是设计前提而非缺陷。
 - 不做种子创建的完整实现，测试用的 .torrent 由测试脚本用 Python 现场构造。
 - 不做 SSE/WebSocket 推送，M1b 用轮询 + `seq` 变化检测。
 
+## 环境依赖验证（不在 G3 卡点内）
+
+与 AC 的区别：AC 必须确定性 —— 断网机器上也该得到同一结论。真实 swarm 依赖外网、
+依赖种子仍有人做种，塞进 G3 会让卡点从「证据」退化成「抽奖」。所以单独成节，按需执行。
+
+| 场景 | 种子 | 命令 | 结果 |
+|---|---|---|---|
+| 真实 swarm（HTTP tracker） | debian-13.7.0-netinst，infohash `7acf8fb5…`，tracker `http://bttracker.debian.org:6969` | `python engine/tests/real_swarm.py` | **PASS**：8 MiB 落盘，峰值 58 peer / 53 seed，1.07–1.21 MiB/s，约 20s |
+| 反面对照（HTTPS tracker） | ubuntu-26.10-desktop，tracker `https://torrent.ubuntu.com` | `python engine/tests/real_swarm.py --torrent <该种子>` | 75s 内 0 peer / 0 字节 |
+
+证据：`evidence/engine-service/NET-real-swarm.log`、`NET-https-tracker.log`。
+两次独立运行均 PASS，说明不是单次侥幸。
+
+脚本退出码语义 —— 关键是区分「引擎坏了」和「环境不通」，否则一次断网就会让人
+误判成代码缺陷，反过来也会让真缺陷藏进「网络问题」里：
+
+| 码 | 含义 | 判据 |
+|---|---|---|
+| 0 | 通过 | 真实进度达到阈值 |
+| 1 | 引擎缺陷 | 连上 peer 但零字节落盘，或任务异常消失 |
+| 2 | 未验证 | 全程零 peer，环境不可达，不算交付失败 |
+| 4 | 缺 fixture | 找不到种子文件 |
+
+区分依据：peer 连接由 libtorrent 负责，与本地构造种子时是同一套代码；而「把收到的
+分片写进文件」走我们自己的 save_path 路径。所以「有 peer 无字节」能指向引擎，
+「无 peer 无字节」只能指向环境。
+
 ## 未验证
 
-- **无 OpenSSL，HTTPS tracker 与 SSL peer 不可用。** 影响真实种子的可下载范围，M1b 的测试全部走本地构造种子与合成磁力，绕开了这个问题，因此本单元无法证明「对真实公网种子可用」。
+- **HTTPS tracker 路径实测不可用，但归因未定。** 已实测：同网络下 HTTP tracker 的真实种子能正常下载，而 HTTPS tracker 的种子 75s 内零 peer、零字节。两个候选原因无法区分——SSL 缺失使 announce 根本发不出去，或该种子 DHT 未在 75s 内出结果。所以「HTTPS tracker 的种子下不动」是观测事实，「因为缺 OpenSSL」仍是推断，需补 OpenSSL 后复测才能定论。
+- **SSL-only peer（强制加密连接）未覆盖。** 无 OpenSSL 时 MSE 仍可用（RC4，不依赖 TLS），但只接受 SSL 握手的 peer 连不上。
+- **DHT 独立可用性未单独验证。** 上面那个零 peer 案例让「没有 tracker 时 DHT 能否独立找到 peer」变成关键未知，M1b 没做 DHT 单独开关的对照测试。
 - **resume data 的免校验恢复未逐字节验证。** AC-08 只断言重启后状态到达 seeding，未断言「校验过程被完全跳过」——后者需要对比磁盘读量，当前没有测量手段。
 - **崩溃隔离只做了进程级设计，未注入真实崩溃。** 没有主动触发 libtorrent abort 来验证引擎死亡后界面侧的表现，因为 M1b 尚无界面。
 - **10 Hz 快照在高任务数下的 CPU 占用未测。** AC-09 只测响应延迟，不测定时器本身的开销。
