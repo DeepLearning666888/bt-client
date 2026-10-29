@@ -1,0 +1,11 @@
+# 本项目不做任何行尾归一化，理由见 toolchain/build-env.md「行尾约定」一节。
+# 这里只标记二进制类型，避免 git 对其做文本处理。
+*.torrent binary
+*.dll     binary
+*.exe     binary
+*.lib     binary
+*.pdb     binary
+*.iso     binary
+*.zip     binary
+*.png     binary
+*.jpg     binary

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>M0 基线报告 v2 · 瓶颈归因</title>
+<style>
+:root{--bg:#0f1115;--card:#171a21;--line:#262b36;--tx:#e6e9ef;--dim:#9aa3b2;
+--ok:#3ddc84;--warn:#ffb020;--bad:#ff5c5c;--acc:#4c9aff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+font:15px/1.7 -apple-system,"Segoe UI","Noto Sans SC",sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:48px 24px 80px}
+h1{font-size:30px;margin:0 0 6px;letter-spacing:-.4px}
+.sub{color:var(--dim);font-size:14px;margin-bottom:34px}
+h2{font-size:20px;margin:44px 0 14px;padding-left:12px;border-left:3px solid var(--acc)}
+p{color:#c8cedb}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:14px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:500;font-size:13px}
+td:not(:first-child),th:not(:first-child){text-align:right}
+tr.hot td{background:rgba(61,220,132,.09)}
+tr.hot td:first-child{color:var(--ok);font-weight:600}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:18px 0}
+.kpi div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi b{display:block;font-size:23px;font-weight:600;letter-spacing:-.5px}
+.kpi span{color:var(--dim);font-size:12px}
+.big{color:var(--acc)}
+.bad{color:var(--bad)}.ok{color:var(--ok)}.warn{color:var(--warn)}
+pre{background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+overflow:auto;font:13px/1.6 ui-monospace,Consolas,monospace;color:#c9d3e2}
+ul{padding-left:20px;color:#c8cedb}li{margin:7px 0}
+.verdict{border-left:3px solid var(--ok);background:rgba(61,220,132,.06);
+border-radius:0 10px 10px 0;padding:14px 18px;margin:18px 0}
+.verdict.bad{border-color:var(--bad);background:rgba(255,92,92,.07)}
+.verdict.warn{border-color:var(--warn);background:rgba(255,176,32,.07)}
+.retract{border:1px solid rgba(255,92,92,.4);background:rgba(255,92,92,.07);
+border-radius:12px;padding:18px 20px;margin:20px 0}
+.retract h3{margin:0 0 8px;font-size:16px;color:var(--bad)}
+footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);
+color:var(--dim);font-size:13px}
+code{background:#0b0d11;padding:1px 6px;border-radius:4px;font-size:13px}
+</style></head><body><div class="wrap">
+
+<h1>M0 基线报告 <span class="warn">v2 · 受控归因</span></h1>
+<div class="sub">Windows · NVMe SSD (YMTC 238GB) + HDD (Toshiba 932GB) · 客户端 aria2 1.37.0 · 官方发布种子 · 2026-10-26/27 实测</div>
+
+<div class="retract">
+<h3>结论修正：上一版报告的判断是错的</h3>
+<p>v1 报告结论是「瓶颈在磁盘写入粒度（16KB）」。受控实验做完后，<b>这个结论被实测数据推翻了</b>。</p>
+<p>反证很简单：<b>同一个 aria2、同一块盘、同样是 15.7 KB 的单次写入</b>，走 HTTP 顺序下载能跑到
+<span class="ok">262.91 MB/s</span>；走 BT 单 peer 能到 <span class="ok">103.08 MB/s</span>；
+8 peer 乱序反而更快，<span class="ok">118.98 MB/s</span>。如果 16KB 粒度真是瓶颈，这三个数字都不可能成立。</p>
+<p>v1 之所以误判，是把「合成随机写测试的 7 MB/s」直接当成了 BT 的写入模式。实际上 BT 的写入是<b>分块局部的</b>
+（即使 8 个 peer 也只是 8 条连续流），加上系统写缓存合并，远没到随机写的恶劣程度。合成测试测的是最坏情况，不是真实负载。</p>
+</div>
+
+<h2>一、受控实验：把网络变量彻底拿掉</h2>
+<p>用本机 loopback 做传输，网络侧能力是 GB/s 级，不可能成为限制。同一个客户端、同一份数据（Debian 13.7 netinst，756 MB），
+只改变写入模式和落盘介质。</p>
+
+<div class="card">
+<table>
+<tr><th>配置</th><th>介质</th><th>写入模式</th><th>峰值 MB/s</th><th>磁盘 MB/s</th><th>写入块</th><th>CPU %</th></tr>
+<tr class="hot"><td>HTTP-loopback</td><td>SSD</td><td>single stream, sequential</td><td>262.9</td><td>246.8</td><td>15.7</td><td>75</td></tr><tr class="hot"><td>BT-1PEER</td><td>SSD</td><td>1 local peer, 4M pieces</td><td>103.1</td><td>112.4</td><td>16.0</td><td>54</td></tr><tr class="hot"><td>BT-8PEER</td><td>SSD</td><td>8 local peers, 4M pieces</td><td>119.0</td><td>120.7</td><td>16.0</td><td>55</td></tr><tr><td>BT-16K</td><td>SSD</td><td>1 local peer, 16K pieces</td><td>75.0</td><td>63.7</td><td>16.0</td><td>65</td></tr><tr><td>BT-HDD-1P</td><td>HDD</td><td>1 local peer, 4M pieces</td><td>88.2</td><td>79.5</td><td>16.0</td><td>38</td></tr><tr class="hot"><td>BT-HDD-8P</td><td>HDD</td><td>8 local peers, 4M pieces</td><td>102.1</td><td>82.3</td><td>16.0</td><td>36</td></tr>
+</table>
+</div>
+
+<div class="verdict">
+<strong>磁盘不是瓶颈，且 peer 越多越快。</strong>
+8 个本地 peer 乱序供给，SSD 上峰值 119.0 MB/s、磁盘 120.7 MB/s；
+即使换到机械盘，8 peer 也有 102.12 MB/s。
+</div>
+
+<h2>二、那互联网上的 8.58 MB/s 是什么限制的</h2>
+
+<div class="kpi">
+<div><span>互联网实测平均</span><b class="warn">8.58</b><span>MB/s</span></div>
+<div><span>互联网峰值</span><b class="warn">14.83</b><span>MB/s</span></div>
+<div><span>本机 BT 能力</span><b class="ok">119.0</b><span>MB/s</span></div>
+<div><span>差距</span><b class="bad">14×</b><span>倍</span></div>
+</div>
+
+<p>同一台机器、同一个客户端，BT 在本机能做到 119.0 MB/s，接互联网只有 8.58 MB/s 平均
+（最好的一次 5 秒均值到过 38 MB/s）。<b>差的那 14 倍，是 seed 供给不足，不是我们的硬件或代码。</b></p>
+
+<div class="verdict warn">
+<strong>这条结论对产品规划的意义：</strong>
+逐项调优客户端内部（磁盘调度、写缓存、预分配）在 SSD 上<b>换不来速度</b>，因为卡点根本不在客户端内部。
+真正能拉开差距的是「拿到更多可用 peer」——连接数、NAT 穿透、tracker/DHT 覆盖、反吸血策略。
+v1 报告里「磁盘调度是第一优先级」的判断，需要降级。
+</div>
+
+<h2>三、调优参数确实无效（这部分结论仍然成立）</h2>
+<p>预分配、写缓存这些参数改不动任何东西，5 组配置的写入块全部是 16.0 KB：</p>
+<div class="card">
+<table>
+<tr><th>配置</th><th>平均 (MB/s)</th><th>峰值5s (MB/s)</th><th>单次写入</th></tr>
+<tr><td>none_cache16</td><td>12.89</td><td>38.23</td><td>16.0 KB</td></tr><tr><td>prealloc_c16</td><td>7.43</td><td>9.49</td><td>15.9 KB</td></tr><tr><td>none_cache256</td><td>6.82</td><td>17.60</td><td>15.9 KB</td></tr><tr><td>prealloc_c256</td><td>8.35</td><td>13.17</td><td>15.9 KB</td></tr><tr><td>prealloc_c512</td><td>12.47</td><td>15.85</td><td>16.0 KB</td></tr>
+</table>
+</div>
+<p>但注意归因变了：<b>不是「16KB 太小所以慢」，而是「aria2 的写入块固定 16KB，改不了」</b>。
+它不影响上限（HTTP 用同样的块跑到 247 MB/s），所以<b>不值得为这个参数花时间</b>。</p>
+
+<h2>四、磁盘真实能力（两种介质对照）</h2>
+<div class="card">
+<table>
+<tr><th>写入模式</th><th>SSD (C:) MB/s</th><th>IOPS</th></tr>
+<tr><td>seq-16KB</td><td>211.6</td><td>13545</td></tr><tr><td>seq-1MB</td><td>215.8</td><td>216</td></tr><tr><td>seq-64KB</td><td>215.4</td><td>3447</td></tr><tr><td>rand-16KB-4GB</td><td>7.0</td><td>445</td></tr><tr><td>rand-256KB-4GB</td><td>24.5</td><td>98</td></tr>
+</table>
+</div>
+<div class="card">
+<table>
+<tr><th>写入模式</th><th>HDD (D:) MB/s</th><th>IOPS</th></tr>
+<tr><td>seq-16KB</td><td>140.5</td><td>8994</td></tr><tr><td>seq-1MB</td><td>153.9</td><td>154</td></tr><tr><td>rand-16KB-2GB</td><td>1.7</td><td>112</td></tr><tr><td>rand-256KB-2GB</td><td>9.4</td><td>38</td></tr>
+</table>
+</div>
+<p>机械盘的随机 16KB 是 <b class="bad">1.7 MB/s / 112 IOPS</b>，112 IOPS 就是 7200 转的物理寻道极限。
+这个数据是真的差，但 BT 实测没打到这个点——因为写入是局部的，机械盘的写缓存能吃下去。
+<b>残留风险</b>：机械盘 + 上百个 peer + 高度碎片化的分片顺序，理论上仍可能触发寻道风暴，这一场景本轮无法在本地复现（最多只做到 8 个 peer）。</p>
+
+<h2>五、互联网基线（Ubuntu 26.10 官方 ISO，200 秒）</h2>
+<div class="card">
+<table>
+<tr><th>指标</th><th>实测值</th></tr>
+<tr><td>平均下载速度（稳态）</td><td>8.58 MB/s</td></tr>
+<tr><td>峰值（单秒 / 最优5秒）</td><td>14.83 / 14.76 MB/s</td></tr>
+<tr><td>磁盘写入</td><td>8.56 MB/s（与网络 1:1，无放大）</td></tr>
+<tr><td>写入 IOPS / 单次写入</td><td>550 / 15.9 KB</td></tr>
+<tr><td>CPU / 内存 / 句柄</td><td>23.8 % 单核 / 40 MB / 315</td></tr>
+<tr><td>最大连接数 / 做种者</td><td>162 / 91</td></tr>
+</table>
+</div>
+
+<h2>六、磁力链路（这部分结论不变）</h2>
+<div class="card">
+<table>
+<tr><th>阶段</th><th>耗时</th></tr>
+<tr><td>点击磁力 → 元数据就绪（BEP-9）</td><td class="bad">18.33 s</td></tr>
+<tr><td>点击磁力 → 首个分片落盘</td><td class="bad">22.14 s</td></tr>
+<tr><td>对照：有 .torrent 文件时的首字节</td><td class="ok">0.05 s</td></tr>
+</table>
+</div>
+<p>22 秒的空白期是体验上的真问题，必须做成可观测的分阶段状态机。这一条不受归因修正影响。</p>
+
+<h2>七、端到端正确性</h2>
+<div class="card">
+<table>
+<tr><th>检查项</th><th>结果</th></tr>
+<tr><td>Debian 13.7 netinst 完整下载</td><td class="ok">完成，180.3 秒，平均 4.19 MB/s</td></tr>
+<tr><td>分片 SHA-1 全量重校验</td><td class="ok">Verification finished successfully</td></tr>
+<tr><td>对比 Debian 官方 SHA256</td><td class="ok">a7ef94ac2fb9a7fe… 一致</td></tr>
+<tr><td>本地种子做种/下载往返</td><td class="ok">6 组受控实验全部校验通过（756 MB × 6）</td></tr>
+</table>
+</div>
+
+<h2>八、修正后的工程结论</h2>
+<ul>
+<li><b class="ok">磁盘不是瓶颈（SSD 已证伪）。</b>BT 写入块固定 16KB，但能跑到 103~119 MB/s。</li>
+<li><b class="ok">多 peer 乱序不是瓶颈。</b>8 peer 比 1 peer 更快，不存在「peer 越多越慢」。</li>
+<li><b class="bad">互联网平均 8.58 MB/s 是种子供给限制。</b>客户端内部调优换不来这块速度。</li>
+<li><b class="warn">真正该投入的方向：peer 获取能力。</b>连接数上限、NAT/UPnP 穿透、DHT 覆盖、tracker 策略、反吸血。</li>
+<li><b class="warn">分片大小影响 CPU，不影响吞吐。</b>16K 分片 CPU 65%，4M 分片 CPU 39~55%。自研引擎该用大分片省 CPU。</li>
+<li><b class="warn">机械盘仍是未排除的风险面。</b>百级 peer + 机械盘的组合需要在真实种子上下补测。</li>
+<li><b class="ok">磁力首包 22 秒是确定要解决的问题。</b></li>
+</ul>
+
+<pre>下一步的技术验证应该换成：
+  1. NAT 穿透成功率（公网端口可达性）——这是拉开速度差距的最大变量
+  2. 真实种子下 HDD + 大 swarm 的写入表现
+  3. 连接数上限对峰值速度的边际收益曲线
+而不是继续在磁盘参数上做文章</pre>
+
+<h2>九、本次产物与副作用</h2>
+<div class="card">
+<table>
+<tr><th>项目</th><th>说明</th></tr>
+<tr><td>系统改动</td><td>无安装、无注册表、无服务、无安全软件变更</td></tr>
+<tr><td>工作区</td><td><code>m0-baseline/</code>，剩余约 1.6 GB（已截断释放 7.4 GB 实验残留）</td></tr>
+<tr><td class="bad">回收站</td><td>删除的测试产物被环境路由进回收站，<b>C: 回收站现有 69 GB</b>，磁盘可用仅 24 GB。彻底释放需清空回收站，请确认</td></tr>
+<tr><td>机械盘</td><td><code>D:\_aria_dl\</code> 残留已截断为 0 字节；<code>D:\_aria_probe.tmp</code> 同样为 0 字节</td></tr>
+</table>
+</div>
+
+<footer>数据来源：out/res_*.json（逐秒原始采样）、exp/res_swarm.json · 报告由 t11 脚本从原始 JSON 生成，数字未经手工转录</footer>
+</div></body></html>

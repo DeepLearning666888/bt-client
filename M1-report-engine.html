@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>M1 · libtorrent 引擎验证报告</title>
+<style>
+:root{
+  --bg:#0f1216; --panel:#161b22; --panel2:#1c232c; --line:#2a3441;
+  --tx:#e6edf3; --tx2:#9aa7b4; --tx3:#6b7887;
+  --ok:#3fb950; --warn:#d29922; --bad:#f85149; --info:#58a6ff; --acc:#a371f7;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:40px 24px 72px;background:var(--bg);color:var(--tx);
+  font:15px/1.72 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+.wrap{max-width:1080px;margin:0 auto}
+h1{font-size:27px;margin:0 0 6px;letter-spacing:-.4px}
+.sub{color:var(--tx2);font-size:14px;margin-bottom:32px}
+h2{font-size:19px;margin:44px 0 14px;padding-left:11px;border-left:3px solid var(--acc)}
+h3{font-size:15.5px;margin:26px 0 8px;color:var(--tx)}
+p{margin:11px 0}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px;background:var(--panel);
+  border-radius:8px;overflow:hidden}
+th{background:var(--panel2);text-align:left;padding:10px 13px;font-weight:600;color:var(--tx2);
+  font-size:12.5px;letter-spacing:.03em;border-bottom:1px solid var(--line)}
+td{padding:9px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.n{white-space:nowrap;font-variant-numeric:tabular-nums}
+code{background:var(--panel2);padding:1.5px 6px;border-radius:4px;font-size:12.5px;
+  font-family:"JetBrains Mono",Consolas,monospace;color:#79c0ff}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;
+  overflow-x:auto;font-size:12.5px;line-height:1.6;
+  font-family:"JetBrains Mono",Consolas,monospace;color:var(--tx2)}
+.ok{color:var(--ok);font-weight:600}
+.bad{color:var(--bad);font-weight:600}
+.warn{color:var(--warn);font-weight:600}
+.info{color:var(--info);font-weight:600}
+.dim{color:var(--tx3)}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px;margin:18px 0}
+.kpi div{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px}
+.kpi b{display:block;font-size:23px;line-height:1.3;letter-spacing:-.5px}
+.kpi span{font-size:12px;color:var(--tx3)}
+.note{background:var(--panel);border-left:3px solid var(--warn);border-radius:8px;
+  padding:14px 18px;margin:16px 0;color:var(--tx2);font-size:13.5px}
+.note.bad{border-left-color:var(--bad)}
+.note.ok{border-left-color:var(--ok)}
+.foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);
+  color:var(--tx3);font-size:12.5px}
+/* ml-css:s */
+/* ============================================================
+   motion-layer v1 · 静态交付文档的动效与性能层
+   约束：所有动画只动 opacity / transform，不触发布局与重绘
+   ============================================================ */
+
+:root{
+  --dur-fast:140ms;
+  --dur-base:240ms;
+  --dur-slow:360ms;
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --prog:#a371f7;
+  --hover-line:#3d4b5c;
+}
+
+/* ---------- 入场揭示 ----------
+   元素位移时长(360ms)略长于透明度(240ms)，形成轻微的分层感。
+   只用 2D translateY：位移仅 14px，用 translate3d 会为全文档每个块
+   强制建立 GPU 合成层，属无收益的显存开销。
+   只在 html.js 存在时隐藏，脚本失效则内容照常可见。 */
+html.js .wrap > *{opacity:0;transform:translateY(14px)}
+html.js .wrap > .in{
+  opacity:1;
+  transform:none;
+  transition:opacity var(--dur-base) var(--ease-out) var(--d,0ms),
+             transform var(--dur-slow) var(--ease-out) var(--d,0ms),
+             border-color var(--dur-fast) linear,
+             border-left-color var(--dur-fast) linear,
+             background-color var(--dur-fast) linear;
+}
+
+/* KPI 容器本身不做透明度动画，避免与子元素淡入叠加导致过暗 */
+html.js .wrap > .kpi{opacity:1;transform:none;transition:none}
+
+/* KPI 卡片逐张浮现 */
+html.js .kpi > div{opacity:0;transform:translateY(10px) scale(.985)}
+html.js .kpi.in > div{
+  opacity:1;
+  transform:none;
+  transition:opacity var(--dur-slow) var(--ease-out),
+             transform var(--dur-slow) var(--ease-out),
+             border-color var(--dur-fast) linear;
+}
+html.js .kpi.in > div:nth-child(1){transition-delay:0ms}
+html.js .kpi.in > div:nth-child(2){transition-delay:45ms}
+html.js .kpi.in > div:nth-child(3){transition-delay:90ms}
+html.js .kpi.in > div:nth-child(4){transition-delay:135ms}
+html.js .kpi.in > div:nth-child(5){transition-delay:180ms}
+html.js .kpi.in > div:nth-child(6){transition-delay:225ms}
+
+/* ---------- 交互反馈 ----------
+   仅在真鼠标设备启用，触屏不产生悬停残留。 */
+@media (hover:hover) and (pointer:fine){
+  .kpi > div,.note,.step,.gate,table tr{
+    transition:border-color var(--dur-fast) linear,
+               border-left-color var(--dur-fast) linear,
+               background-color var(--dur-fast) linear;
+  }
+  table tr:hover{background-color:rgba(255,255,255,.022)}
+  .kpi > div:hover{border-color:var(--hover-line)}
+  .step:hover,.gate:hover{border-color:var(--hover-line)}
+  .note:hover{border-left-color:#94a3b8}
+}
+
+/* ---------- 阅读进度 ----------
+   scaleX 走合成器，滚动时不产生布局与重绘。 */
+.prog{
+  position:fixed;top:0;left:0;right:0;height:2px;
+  background:var(--prog);
+  transform:scaleX(0);transform-origin:0 50%;
+  opacity:0;transition:opacity var(--dur-base) linear;
+  z-index:9999;pointer-events:none;will-change:transform;
+}
+.prog.on{opacity:.85}
+
+/* ---------- 键盘焦点 ---------- */
+:focus-visible{outline:2px solid var(--prog);outline-offset:2px;border-radius:4px}
+
+/* ---------- 减少动效 ---------- */
+@media (prefers-reduced-motion:reduce){
+  html.js .wrap > *,html.js .kpi > div{
+    opacity:1!important;transform:none!important;transition:none!important;
+  }
+  .prog{display:none}
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.01ms!important;
+    scroll-behavior:auto!important;
+  }
+}
+/* ml-css:e */
+</style>
+<!-- ml-head:s -->
+<script>
+/* 首帧即标记 js，杜绝「先显示再隐藏」的闪烁。
+   1.5s 内若主逻辑未就绪，自动移除标记让内容恢复可见——
+   正确性优先于动效，绝不因为脚本问题让文档白屏。 */
+document.documentElement.classList.add('js');
+setTimeout(function () {
+  if (!window.__mlReady) document.documentElement.classList.remove('js');
+}, 1500);
+</script>
+<!-- ml-head:e -->
+</head>
+<body>
+<div class="wrap">
+
+<h1>M1 · libtorrent 引擎验证报告</h1>
+<div class="sub">引擎从零编译到实测跑通 · libtorrent-rasterbar 2.0.11 · 2026-10-27</div>
+
+<div class="kpi">
+  <div><b class="ok">2.0.11</b><span>libtorrent 已编译并运行</span></div>
+  <div><b class="bad">0 / 4</b><span>自动入站映射可用组合</span></div>
+  <div><b class="ok">13</b><span>SSDP 发现的 UPnP 设备</span></div>
+  <div><b class="warn">403</b><span>设备拒绝提供描述文件</span></div>
+  <div><b class="info">0.37</b><span>上传 MB/s（M0 曾为 0）</span></div>
+</div>
+
+<h2>一、这一轮到底解决了什么</h2>
+
+<p>M0 用 aria2 做基线，留下一个空洞：<b>aria2 的 Windows 构建没编 UPnP，且只跑 TCP</b>，
+所以「三种自动映射全灭」这个结论其实是在一个能力不全的客户端上得出的。本轮把真正的内核
+（libtorrent 2.0.11）从源码编出来并实测，把这个洞补上了。</p>
+
+<table>
+<tr><th style="width:22%">环节</th><th style="width:14%">状态</th><th>结果</th></tr>
+<tr><td>工具链自举</td><td class="ok">✅ 完成</td><td>MSVC 19.44 + SDK 22621 + CMake 4.4.4 + Ninja 1.13.2，全部可用</td></tr>
+<tr><td>Boost 依赖</td><td class="ok">✅ 完成</td><td>Boost 1.86 仅用头文件，无需编译任何库（1.69+ 已 header-only）</td></tr>
+<tr><td>libtorrent 编译</td><td class="ok">✅ 完成</td><td>DLL 3.8 MB / 导入库 1.1 MB，DHT=ON，MSE 加密=ON</td></tr>
+<tr><td>探针程序</td><td class="ok">✅ 完成</td><td><code>engine-probe.exe</code> 53 KB，实测两次跑通</td></tr>
+<tr><td>入站映射验证</td><td class="bad">❌ 失败</td><td>四种「传输×协议」组合全部无应答，与 M0 方向一致但证据更硬</td></tr>
+<tr><td>OpenSSL</td><td class="warn">⏸ 未接入</td><td>当前构建缺 HTTPS tracker 与 SSL peer 支持，生产前必须补</td></tr>
+</table>
+
+<h2>二、探针实测数据</h2>
+
+<p>用 Debian 13.7 netinst 种子（792 MB / 3024 分片），真实 swarm，同机同网连跑两次：</p>
+
+<table>
+<tr><th style="width:24%">指标</th><th style="width:20%">第 1 次（45 s）</th><th style="width:20%">第 2 次（60 s）</th><th>判读</th></tr>
+<tr><td>监听套接字</td><td class="n">6 个</td><td class="n">6 个</td><td class="ok">TCP/uTP × 三张网卡，绑定正常</td></tr>
+<tr><td>连接 peer</td><td class="n">95（90 seed）</td><td class="n">132（114 seed）</td><td class="ok">出站连接完全正常</td></tr>
+<tr><td>下载速率</td><td class="n">7.11 MB/s</td><td class="n">7.70 MB/s</td><td>与 M0 互联网基线（8.58）同量级</td></tr>
+<tr><td>上传速率</td><td class="n warn">0.32 MB/s</td><td class="n warn">0.37 MB/s</td><td class="warn">非零，与 M0「恒为 0」矛盾</td></tr>
+<tr><td>完成度</td><td class="n">33.19%</td><td class="n">86.37%</td><td class="ok">分片校验通过，写入链路正常</td></tr>
+<tr><td>外部 IP（DHT 回报）</td><td colspan="2" class="n">203.0.113.7</td><td class="ok">出站 DHT 可用</td></tr>
+<tr><td>portmap_alert</td><td colspan="2" class="bad">0 条</td><td class="bad">没有任何一个映射成功回调</td></tr>
+</table>
+
+<h3>四种组合逐项结果</h3>
+
+<table>
+<tr><th style="width:26%">传输 × 协议</th><th style="width:18%">结果</th><th>证据</th></tr>
+<tr><td>NAT-PMP / PCP · TCP</td><td class="bad">无应答</td><td>已识别网关 <code>192.168.1.1</code>，请求已发出，60 s 无回包</td></tr>
+<tr><td>NAT-PMP / PCP · UDP</td><td class="bad">无应答</td><td>同上，同样静默丢弃</td></tr>
+<tr><td>UPnP-IGD · TCP</td><td class="bad">被拒绝</td><td>设备应答了，但取描述文件返回 <code>403 Forbidden</code></td></tr>
+<tr><td>UPnP-IGD · UDP</td><td class="bad">被拒绝</td><td>同上</td></tr>
+</table>
+
+<div class="note">
+<b>一个容易读错的点：</b>日志里的 <code>==&gt; port map [ transport: PCP ... external: 6881 ]</code>
+<b>不是成功回调，是发出的请求</b>。已核对 libtorrent 源码
+<code>natpmp.cpp:535</code>，这行日志位于 <code>send_map_request()</code> 内部，
+在 <code>m_socket.send_to()</code> 之前打印。看到它只能说明「请求发出去了」。
+</div>
+
+<h2>三、对 M0 结论的两处修正</h2>
+
+<table>
+<tr><th style="width:26%">M0 原结论</th><th style="width:16%">本轮判定</th><th>依据</th></tr>
+<tr>
+  <td>路由器对 SSDP 组播和单播都不响应</td>
+  <td class="warn">需修正</td>
+  <td>SSDP 发现<b>是通的</b>：单次运行发现 13 个 rootdevice（<code>192.168.50.1</code>～<code>192.168.50.14:37443</code>）。
+      失败发生在下一步——HTTP 取描述文件被 <code>403</code> 拒绝。原来的「不响应」是错判。</td>
+</tr>
+<tr>
+  <td>无入站则上传恒为 0</td>
+  <td class="warn">需修正</td>
+  <td>本轮上传 0.32 / 0.37 MB/s，非零。M0 那次是 aria2，可能与其配置或 peer 分布有关，
+      <b>不足以支撑「无入站 = 上传恒 0」这个强结论</b>。</td>
+</tr>
+</table>
+
+<p>另外，网络的真实形态也确认了：WLAN 是 <code>192.168.1.100/23</code>，掩码 /23 让
+<code>192.168.0.x</code> 与我们处在<b>同一个二层广播域</b>，所以这<b>不是双层 NAT</b>，
+而是同网段里有一批 UPnP 设备全部拒绝服务。</p>
+
+<pre>GET http://192.168.50.1:37443/upnpap.xml
+HTTP/1.1 403 Forbidden
+SERVER: Linux/5.10.0, UPnP/1.0, Portable SDK for UPnP devices/1.14.12
+
+GET http://192.168.50.1:37443/rootDesc.xml   ->  404</pre>
+
+<p>设备跑的是 Linux 5.10 + pupnp 1.14.12（标准 UPnP 协议栈），说明它<b>具备</b> UPnP 能力，
+只是拒绝向我们提供描述文件。<b>具体原因尚未定位</b>（可能是源地址/授权策略），不做进一步推断。</p>
+
+<h2>四、工具链的坑：一条根因链</h2>
+
+<p>这一轮真正耗时的是 vcpkg，而它所有报错都是同一个原因的不同表现：</p>
+
+<pre>安全策略把 reg.exe 列入程序黑名单
+  └─ vcvars64.bat 靠 reg.exe 查 SDK 安装位置 → 查不到
+      └─ 它导出的 INCLUDE / LIB / PATH 全部残缺（实测快照）
+           INCLUDE = 只有 MSVC\include + VC\Auxiliary\VS\include   ← 缺 ucrt/um/shared/winrt
+           LIB     = 只有 MSVC\lib\x64                            ← 缺 um\x64 / ucrt\x64
+           PATH    = 被整体覆盖，SDK bin、cmake、ninja 全不见
+              └─ CMake 探不到 rc.exe / mt.exe → CMAKE_MT-NOTFOUND
+                  └─ 编译器测试链接失败 → 所有 port 编译失败</pre>
+
+<p>连带症状包括：<code>Could not fetch ninja</code>（其实 ninja 单独跑成功）、
+<code>curl error 7</code> 连不上 github（vcpkg 读 IE 代理也是靠 reg.exe，
+读不到就直连）。<b>都不是独立问题。</b></p>
+
+<div class="note ok">
+<b>最终方案：绕开 vcpkg。</b>手工拼 INCLUDE/LIB/PATH（等价于 vcvars 的产出，不碰注册表），
+CMake + Ninja + MSVC 直接编。已固化为 <code>engine-probe/env.cmd</code> 与
+<code>env.ps1</code>（后者受 PowerShell 执行策略限制，用 <code>env.cmd</code>）。
+</div>
+
+<h2>五、对产品的直接影响</h2>
+
+<table>
+<tr><th style="width:26%">结论</th><th style="width:40%">依据</th><th>产品动作</th></tr>
+<tr>
+  <td class="bad">自动入站映射在本网络不可用</td>
+  <td>libtorrent 把 UPnP + NAT-PMP + PCP 全部试过，四条路径全断</td>
+  <td>「手动端口映射引导」是<b>必备功能</b>，不是可选优化</td>
+</tr>
+<tr>
+  <td class="info">失败原因可以分类展示</td>
+  <td>三种失败模式在告警层是可区分的：未发现设备 / 设备拒绝(403) / 请求无应答</td>
+  <td>诊断面板要显示<b>具体原因</b>，而不是笼统的「NAT 受限」——这正是纯客户端能给出的差异化</td>
+</tr>
+<tr>
+  <td class="warn">上传不依赖入站映射</td>
+  <td>本轮上传 0.37 MB/s 时无任何映射</td>
+  <td>「上传恒 0」不能写进产品文案；做种能力的真实上限需要单独受控测</td>
+</tr>
+<tr>
+  <td class="warn">当前构建缺 OpenSSL</td>
+  <td>编译期 OpenSSL 未找到，走降级分支</td>
+  <td>上线前必须补：否则 HTTPS tracker 不可用、SSL peer 连不上</td>
+</tr>
+</table>
+
+<h2>六、仍未验证 / 已知限制</h2>
+
+<table>
+<tr><th style="width:36%">项</th><th style="width:14%">性质</th><th>说明</th></tr>
+<tr><td>上传 0.37 MB/s 的成因</td><td class="warn">未归因</td><td>只观察到现象，未做受控实验分离「协议开销 / 真实上传 / 测量口径」</td></tr>
+<tr><td>UPnP 403 的确切原因</td><td class="warn">未定位</td><td>已知设备是 pupnp 1.14.12，具备能力但拒绝服务；未做进一步探测</td></tr>
+<tr><td>手动映射后的上传提升幅度</td><td class="dim">未验证</td><td>需要拿到网关管理权限才能测</td></tr>
+<tr><td>HTTPS tracker / SSL peer</td><td class="bad">当前不可用</td><td>无 OpenSSL 构建的直接后果</td></tr>
+<tr><td>HDD + 上百 peer 高碎片场景</td><td class="dim">沿用 M0 遗留</td><td>只测到 8 peer，本机 SSD</td></tr>
+</table>
+
+<h2>七、下一步</h2>
+
+<table>
+<tr><th style="width:10%">序</th><th style="width:34%">任务</th><th>为什么是这个顺序</th></tr>
+<tr><td class="n">1</td><td>引擎独立进程 + HTTP/JSON 接口</td><td>探针已证明 libtorrent 在本机可用，可以把引擎和 UI 彻底解耦了</td></tr>
+<tr><td class="n">2</td><td>NAT 诊断面板（含手动映射引导）</td><td>本轮最大的产品级结论，数据已够，可以直接做</td></tr>
+<tr><td class="n">3</td><td>补 OpenSSL 重建</td><td>不阻塞开发，但上线前必须完成</td></tr>
+<tr><td class="n">4</td><td>Tauri 2 + React 桌面端</td><td>依赖 1、2 的接口先稳定</td></tr>
+</table>
+
+<div class="foot">
+数据来源：<code>engine-probe/probe-run.log</code>（45 s）、<code>probe-run2.log</code>（60 s）、
+libtorrent 源码 <code>src/natpmp.cpp</code>、本机 <code>Get-NetIPConfiguration</code>、手工 HTTP 探测。<br>
+所有结论均来自本机实测；未做跨网络、跨设备验证。
+</div>
+
+</div>
+<!-- ml-body:s -->
+<div class="prog" aria-hidden="true"></div>
+<script>
+(function () {
+  var root = document.documentElement;
+  root.classList.add('js');
+
+  if (!('IntersectionObserver' in window)) {
+    root.classList.remove('js');
+    window.__mlReady = true;
+    return;
+  }
+
+  var MAX_STEP = 6;
+  var STEP_MS = 45;
+
+  var targets = Array.prototype.slice.call(document.querySelectorAll('.wrap > *'));
+
+  var io = new IntersectionObserver(function (entries) {
+    var i = 0;
+    for (var n = 0; n < entries.length; n++) {
+      var e = entries[n];
+      if (!e.isIntersecting) continue;
+      var idx = i < MAX_STEP ? i : MAX_STEP;
+      e.target.style.setProperty('--d', idx * STEP_MS + 'ms');
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+      i++;
+    }
+  }, { rootMargin: '0px 0px -6% 0px', threshold: 0.01 });
+
+  for (var k = 0; k < targets.length; k++) io.observe(targets[k]);
+
+  window.__mlReady = true;
+
+  var prog = document.querySelector('.prog');
+  if (!prog) return;
+
+  var pending = false;
+
+  function paint() {
+    var max = root.scrollHeight - window.innerHeight;
+    var ratio = max > 0 ? window.scrollY / max : 0;
+    if (ratio < 0) ratio = 0;
+    else if (ratio > 1) ratio = 1;
+    prog.style.transform = 'scaleX(' + ratio + ')';
+    if (window.scrollY > 48) prog.classList.add('on');
+    else prog.classList.remove('on');
+    pending = false;
+  }
+
+  function tick() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(paint);
+  }
+
+  window.addEventListener('scroll', tick, { passive: true });
+  window.addEventListener('resize', tick, { passive: true });
+  paint();
+})();
+</script>
+<!-- ml-body:e -->
+</body>
+</html>

@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>natdiag 模块 · 文件需求与设计说明</title>
+<style>
+:root{
+  --bg:#0f1216; --panel:#161b22; --panel2:#1c232c; --line:#2a3441;
+  --tx:#e6edf3; --tx2:#9aa7b4; --tx3:#6b7887;
+  --ok:#3fb950; --warn:#d29922; --bad:#f85149; --info:#58a6ff; --acc:#a371f7;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:40px 24px 72px;background:var(--bg);color:var(--tx);
+  font:15px/1.72 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+.wrap{max-width:1080px;margin:0 auto}
+h1{font-size:27px;margin:0 0 6px;letter-spacing:-.4px}
+.sub{color:var(--tx2);font-size:14px;margin-bottom:32px}
+h2{font-size:19px;margin:44px 0 14px;padding-left:11px;border-left:3px solid var(--acc)}
+h3{font-size:15.5px;margin:26px 0 8px;color:var(--tx)}
+p{margin:11px 0}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px;background:var(--panel);
+  border-radius:8px;overflow:hidden}
+th{background:var(--panel2);text-align:left;padding:10px 13px;font-weight:600;color:var(--tx2);
+  font-size:12.5px;letter-spacing:.03em;border-bottom:1px solid var(--line)}
+td{padding:9px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.n{white-space:nowrap;font-variant-numeric:tabular-nums}
+code{background:var(--panel2);padding:1.5px 6px;border-radius:4px;font-size:12.5px;
+  font-family:"JetBrains Mono",Consolas,monospace;color:#79c0ff}
+pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px 16px;
+  overflow-x:auto;font:12.5px/1.65 "JetBrains Mono",Consolas,monospace;color:#c9d1d9;margin:14px 0}
+pre code{background:none;padding:0;color:inherit}
+.c{color:var(--tx3)}
+.k{color:#ff7b72}
+.s{color:#a5d6ff}
+.ok{color:var(--ok);font-weight:600}
+.bad{color:var(--bad);font-weight:600}
+.warn{color:var(--warn);font-weight:600}
+.info{color:var(--info);font-weight:600}
+.dim{color:var(--tx3)}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px;margin:18px 0}
+.kpi div{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px}
+.kpi b{display:block;font-size:23px;line-height:1.3;letter-spacing:-.5px}
+.kpi span{font-size:12px;color:var(--tx3)}
+.note{background:var(--panel);border-left:3px solid var(--warn);border-radius:8px;
+  padding:14px 18px;margin:16px 0;color:var(--tx2);font-size:13.5px}
+.note.bad{border-left-color:var(--bad)}
+.note.info{border-left-color:var(--info)}
+.foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);
+  color:var(--tx3);font-size:12.5px}
+.tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11.5px;font-weight:600}
+.tag.new{background:rgba(63,185,80,.14);color:var(--ok)}
+.tag.mod{background:rgba(210,153,34,.14);color:var(--warn)}
+.tag.del{background:rgba(248,81,73,.14);color:var(--bad)}
+/* ml-css:s */
+/* ============================================================
+   motion-layer v1 · 静态交付文档的动效与性能层
+   约束：所有动画只动 opacity / transform，不触发布局与重绘
+   ============================================================ */
+
+:root{
+  --dur-fast:140ms;
+  --dur-base:240ms;
+  --dur-slow:360ms;
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --prog:#a371f7;
+  --hover-line:#3d4b5c;
+}
+
+/* ---------- 入场揭示 ----------
+   元素位移时长(360ms)略长于透明度(240ms)，形成轻微的分层感。
+   只用 2D translateY：位移仅 14px，用 translate3d 会为全文档每个块
+   强制建立 GPU 合成层，属无收益的显存开销。
+   只在 html.js 存在时隐藏，脚本失效则内容照常可见。 */
+html.js .wrap > *{opacity:0;transform:translateY(14px)}
+html.js .wrap > .in{
+  opacity:1;
+  transform:none;
+  transition:opacity var(--dur-base) var(--ease-out) var(--d,0ms),
+             transform var(--dur-slow) var(--ease-out) var(--d,0ms),
+             border-color var(--dur-fast) linear,
+             border-left-color var(--dur-fast) linear,
+             background-color var(--dur-fast) linear;
+}
+
+/* KPI 容器本身不做透明度动画，避免与子元素淡入叠加导致过暗 */
+html.js .wrap > .kpi{opacity:1;transform:none;transition:none}
+
+/* KPI 卡片逐张浮现 */
+html.js .kpi > div{opacity:0;transform:translateY(10px) scale(.985)}
+html.js .kpi.in > div{
+  opacity:1;
+  transform:none;
+  transition:opacity var(--dur-slow) var(--ease-out),
+             transform var(--dur-slow) var(--ease-out),
+             border-color var(--dur-fast) linear;
+}
+html.js .kpi.in > div:nth-child(1){transition-delay:0ms}
+html.js .kpi.in > div:nth-child(2){transition-delay:45ms}
+html.js .kpi.in > div:nth-child(3){transition-delay:90ms}
+html.js .kpi.in > div:nth-child(4){transition-delay:135ms}
+html.js .kpi.in > div:nth-child(5){transition-delay:180ms}
+html.js .kpi.in > div:nth-child(6){transition-delay:225ms}
+
+/* ---------- 交互反馈 ----------
+   仅在真鼠标设备启用，触屏不产生悬停残留。 */
+@media (hover:hover) and (pointer:fine){
+  .kpi > div,.note,.step,.gate,table tr{
+    transition:border-color var(--dur-fast) linear,
+               border-left-color var(--dur-fast) linear,
+               background-color var(--dur-fast) linear;
+  }
+  table tr:hover{background-color:rgba(255,255,255,.022)}
+  .kpi > div:hover{border-color:var(--hover-line)}
+  .step:hover,.gate:hover{border-color:var(--hover-line)}
+  .note:hover{border-left-color:#94a3b8}
+}
+
+/* ---------- 阅读进度 ----------
+   scaleX 走合成器，滚动时不产生布局与重绘。 */
+.prog{
+  position:fixed;top:0;left:0;right:0;height:2px;
+  background:var(--prog);
+  transform:scaleX(0);transform-origin:0 50%;
+  opacity:0;transition:opacity var(--dur-base) linear;
+  z-index:9999;pointer-events:none;will-change:transform;
+}
+.prog.on{opacity:.85}
+
+/* ---------- 键盘焦点 ---------- */
+:focus-visible{outline:2px solid var(--prog);outline-offset:2px;border-radius:4px}
+
+/* ---------- 减少动效 ---------- */
+@media (prefers-reduced-motion:reduce){
+  html.js .wrap > *,html.js .kpi > div{
+    opacity:1!important;transform:none!important;transition:none!important;
+  }
+  .prog{display:none}
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.01ms!important;
+    scroll-behavior:auto!important;
+  }
+}
+/* ml-css:e */
+</style>
+<!-- ml-head:s -->
+<script>
+/* 首帧即标记 js，杜绝「先显示再隐藏」的闪烁。
+   1.5s 内若主逻辑未就绪，自动移除标记让内容恢复可见——
+   正确性优先于动效，绝不因为脚本问题让文档白屏。 */
+document.documentElement.classList.add('js');
+setTimeout(function () {
+  if (!window.__mlReady) document.documentElement.classList.remove('js');
+}, 1500);
+</script>
+<!-- ml-head:e -->
+</head>
+<body>
+<div class="wrap">
+
+<h1>natdiag 模块 · 文件需求与设计说明</h1>
+<div class="sub">从 engine-probe 抽取 NAT / 入站诊断逻辑为独立可复用库 · <b class="ok">已交付并验证</b> · 2026-10-27</div>
+
+<div class="kpi">
+  <div><b>17 / 3</b><span>新增 / 修改文件</span></div>
+  <div><b>1235</b><span>实际代码行数</span></div>
+  <div><b class="warn">4</b><span>实际修掉的现存缺陷</span></div>
+  <div><b class="ok">0</b><span>新增第三方依赖</span></div>
+  <div><b class="ok">24 / 75</b><span>单元测试用例 / 断言</span></div>
+</div>
+
+<h2>一、为什么要先出清单</h2>
+
+<p>上一轮我提了「把 NAT 诊断逻辑抽成模块」这一句就完了，没有文件级凭据、没有接口契约、没有验证方案。这次补上。</p>
+
+<p>更关键的是：<b>这段代码不能直接搬。</b>我读完 314 行 <code>main.cpp</code>，里面混着 5 处设计缺陷。如果照搬成模块，缺陷会跟着进生产代码，而 M2 的桌面端会直接消费它的输出——那时再改就要动 UI 契约。现在改是零成本。</p>
+
+<h2>二、现存代码的 5 个缺陷（可核验）</h2>
+
+<table>
+<tr><th style="width:30px">#</th><th style="width:120px">位置</th><th>问题</th><th style="width:230px">后果</th></tr>
+
+<tr><td class="n">1</td><td class="n">main.cpp:168-175</td>
+<td>诊断状态存在 <code>std::map&lt;std::string,std::string&gt;</code>，键是已格式化的文案 <code>"NAT-PMP/PCP TCP"</code>，值是给人看的句子</td>
+<td>输出即逻辑。M2 要拿 JSON，只能正则回去拆字符串</td></tr>
+
+<tr><td class="n">2</td><td class="n">main.cpp:215</td>
+<td><code>portmap_error_alert</code> 的真实协议字段被丢弃，硬写成 <code>portmap_protocol::none</code>，查询时再拼 <code>"NAT-PMP/PCP -"</code></td>
+<td><b>数据有损</b>。同一 transport 下 TCP 和 UDP 各失败一次会互相覆盖，只剩一条</td></tr>
+
+<tr><td class="n">3</td><td class="n">main.cpp:309-313</td>
+<td>结论只有 <code>any_mapping</code> 一个布尔</td>
+<td>区分不了「网关拒绝」「发出去无应答」「协议没启用」。这三种的处置动作完全不同</td></tr>
+
+<tr><td class="n">4</td><td class="n">main.cpp:263-284</td>
+<td>「四种组合固定列出」写死在 printf 循环里，缺省的也靠代码兜一句文案</td>
+<td>换任何消费者都要重写这段，没法测</td></tr>
+
+<tr><td class="n">5</td><td class="n">main.cpp:292-299</td>
+<td><code>metadata_received</code> 的语义修正靠 printf 分支绕过，不是数据层建模</td>
+<td>数据里仍是一个会撒谎的布尔值，谁复用它谁踩坑</td></tr>
+</table>
+
+<div class="note bad">
+<b>另有一条实测发现的坑，必须写进模块的判据：</b>golden 日志里 <code>external ip : 203.0.113.7</code> 是有值的，但四种映射组合全部无应答。<b>拿到外网 IP ≠ 具备入站能力</b>——libtorrent 也会从 peer / tracker 处得知外网地址。如果模块把 <code>external_ip_alert</code> 当作映射成功的证据，就会把「完全不通」错判成「通了」。
+</div>
+
+<h2>三、模块边界</h2>
+
+<p>核心决策：<b>模块不持有 session，不自己跑协议，只消费事件并给出结论。</b></p>
+
+<pre><code><span class="c">引擎进程 / 探针</span>
+   │  lt::session::pop_alerts()
+   ▼
+natdiag::from_alert(alert)      <span class="c">← 唯一接触 libtorrent 的地方</span>
+   │  NatEvent（纯数据，5 个字段）
+   ▼
+natdiag::Collector::feed(ev)    <span class="c">← 只吃自己定义的事件，不吃 lt::alert</span>
+   │
+   ▼
+natdiag::Collector::snapshot()  <span class="c">← 不可变快照，可反复取</span>
+   │
+   ├─ natdiag::to_json()        <span class="c">→ M2 桌面端 / HTTP 接口</span>
+   └─ natdiag::to_text()        <span class="c">→ CLI 探针 / 日志</span></code></pre>
+
+<h3>为什么 collector 不吃 <code>lt::alert</code></h3>
+<p>为了可测性。造一个真实的 <code>portmap_alert</code> 需要 session 上下文和真实网关；造一个 <code>NatEvent</code> 只要填 5 个字段。代价是多 110 行适配代码，换来的是<b>判定逻辑可以脱离网络做穷举测试</b>——这对一个「结论会被用户当成故障依据」的模块是硬要求。</p>
+
+<h3>为什么返回快照而不是回调</h3>
+<p>诊断是状态查询，不是事件流。快照天然可序列化、可缓存、可对比，UI 拉取比订阅简单。</p>
+
+<h2>四、文件清单</h2>
+
+<table>
+<tr><th style="width:26px">#</th><th style="width:290px">路径</th><th style="width:52px">动作</th><th>职责</th><th style="width:52px">估行</th></tr>
+
+<tr><td class="n">1</td><td><code>natdiag/CMakeLists.txt</code></td><td><span class="tag new">新增</span></td>
+<td>静态库 target <code>natdiag</code> + 可选测试 target；libtorrent 链接范围只到 <code>adapt.cpp</code></td><td class="n">45</td></tr>
+
+<tr><td class="n">2</td><td><code>natdiag/include/natdiag/natdiag.hpp</code></td><td><span class="tag new">新增</span></td>
+<td>公共 API 唯一入口：枚举、<code>NatEvent</code>、<code>SlotState</code>、<code>Snapshot</code>、<code>Collector</code></td><td class="n">130</td></tr>
+
+<tr><td class="n">3</td><td><code>natdiag/include/natdiag/serialize.hpp</code></td><td><span class="tag new">新增</span></td>
+<td>声明 <code>to_json</code> / <code>to_text</code> 两路输出</td><td class="n">30</td></tr>
+
+<tr><td class="n">4</td><td><code>natdiag/src/adapt.hpp</code></td><td><span class="tag new">新增</span></td>
+<td><code>from_alert()</code> 声明，隔离 libtorrent 头文件</td><td class="n">40</td></tr>
+
+<tr><td class="n">5</td><td><code>natdiag/src/adapt.cpp</code></td><td><span class="tag new">新增</span></td>
+<td>6 种 alert → <code>NatEvent</code> 的映射，含 <code>lt::socket_type_t</code> / <code>portmap_transport</code> 的字符串化</td><td class="n">110</td></tr>
+
+<tr><td class="n">6</td><td><code>natdiag/src/collector.cpp</code></td><td><span class="tag new">新增</span></td>
+<td>事件状态机：2 transport × 2 protocol = 4 slot，维护状态迁移与证据计数</td><td class="n">170</td></tr>
+
+<tr><td class="n">7</td><td><code>natdiag/src/diagnosis.cpp</code></td><td><span class="tag new">新增</span></td>
+<td>slot 表 → <code>Verdict</code> + <code>Remediation</code>，实现第五节判定表</td><td class="n">140</td></tr>
+
+<tr><td class="n">8</td><td><code>natdiag/src/serialize.cpp</code></td><td><span class="tag new">新增</span></td>
+<td>JSON（手写转义，无第三方库）+ 人读文本两种渲染</td><td class="n">190</td></tr>
+
+<tr><td class="n">9</td><td><code>natdiag/tests/test_main.cpp</code></td><td><span class="tag new">新增</span></td>
+<td>零依赖断言宏 + 用例注册 + main</td><td class="n">60</td></tr>
+
+<tr><td class="n">10</td><td><code>natdiag/tests/test_collector.cpp</code></td><td><span class="tag new">新增</span></td>
+<td>状态机用例：正常序列、乱序、重复、缺字段、TCP/UDP 并发失败</td><td class="n">130</td></tr>
+
+<tr><td class="n">11</td><td><code>natdiag/tests/test_diagnosis.cpp</code></td><td><span class="tag new">新增</span></td>
+<td>判定表逐行驱动，一行用例对应判定表一行</td><td class="n">120</td></tr>
+
+<tr><td class="n">12</td><td><code>natdiag/tests/golden/probe-run2-utf8.log</code></td><td><span class="tag new">新增</span></td>
+<td>由现有 <code>probe-run2.log</code> 转码存档，作回归基线</td><td class="n">114</td></tr>
+
+<tr><td class="n">13</td><td><code>natdiag/README.md</code></td><td><span class="tag new">新增</span></td>
+<td>API 用法、判定语义、已知不支持的场景</td><td class="n">80</td></tr>
+
+<tr><td class="n">14</td><td><code>engine-probe/src/main.cpp</code></td><td><span class="tag mod">修改</span></td>
+<td>314 → 约 120 行。只留参数解析、session 生命周期、喂 alert、打印快照</td><td class="n">−194</td></tr>
+
+<tr><td class="n">15</td><td><code>engine-probe/CMakeLists.txt</code></td><td><span class="tag mod">修改</span></td>
+<td><code>add_subdirectory(../natdiag)</code> + 链接 <code>natdiag</code></td><td class="n">+6</td></tr>
+</table>
+
+<h2>五、接口契约</h2>
+
+<h3>5.1 公共头（只暴露这些）</h3>
+
+<pre><code><span class="k">namespace</span> natdiag {
+
+<span class="k">enum class</span> Transport { natpmp, upnp };                    <span class="c">// NAT-PMP 侧含 PCP</span>
+<span class="k">enum class</span> Protocol  { tcp, udp };
+<span class="k">enum class</span> SlotState { unmapped, pending, mapped, rejected };
+
+<span class="k">enum class</span> Verdict {
+    working,        <span class="c">// 至少一个组合拿到映射，上传可恢复</span>
+    refused,        <span class="c">// 网关明确拒绝（有错误码）</span>
+    silent,         <span class="c">// 请求已发出，无应答 —— 本机实测就是这种</span>
+    disabled,       <span class="c">// 请求数为 0，协议没发出去</span>
+    insufficient    <span class="c">// 采样窗口太短，不敢下结论</span>
+};
+
+<span class="k">enum class</span> Remediation {
+    none, manual_port_forward, check_firewall, enable_protocol, sample_longer
+};
+
+<span class="k">struct</span> NatEvent {                       <span class="c">// 唯一的输入单元</span>
+    <span class="k">enum class</span> Kind { listen_ok, listen_fail, map_ok, map_err, map_log, external_ip };
+    Kind kind;
+    Transport transport;                  <span class="c">// listen_* / external_ip 时无意义</span>
+    Protocol protocol;                    <span class="c">// map_log / external_ip 时无意义</span>
+    <span class="k">int</span> port = 0;
+    <span class="k">int</span> error_code = 0;                   <span class="c">// 0 = 无错误</span>
+    std::string detail;                   <span class="c">// 已字符串化的地址 / 错误文本</span>
+};
+
+<span class="k">struct</span> SlotStateInfo {
+    Transport transport; Protocol protocol;
+    SlotState state = SlotState::unmapped;
+    <span class="k">int</span> external_port = 0;                 <span class="c">// 仅 mapped 有效</span>
+    <span class="k">int</span> error_code = 0;                    <span class="c">// 仅 rejected 有效</span>
+    std::string error_text;
+    <span class="k">int</span> log_lines = 0;                     <span class="c">// 证据计数</span>
+};
+
+<span class="k">struct</span> Snapshot {
+    std::vector&lt;std::string&gt; listen_ok;    <span class="c">// "TCP 192.168.1.100:6881"</span>
+    std::vector&lt;std::string&gt; listen_fail;
+    SlotStateInfo slots[4];               <span class="c">// 固定 4 项，顺序稳定</span>
+    std::string external_ip;              <span class="c">// 不参与判定，见第二节警告</span>
+    Verdict verdict = Verdict::insufficient;
+    std::vector&lt;Remediation&gt; remediation;
+    <span class="k">int</span> sampled_seconds = 0;
+};
+
+<span class="k">class</span> Collector {
+<span class="k">public:</span>
+    <span class="k">void</span> feed(NatEvent <span class="k">const</span>&amp; ev);
+    <span class="k">void</span> set_elapsed(<span class="k">int</span> seconds);       <span class="c">// 宿主告知已采样多久</span>
+    Snapshot snapshot() <span class="k">const</span>;             <span class="c">// 纯函数式，不改状态</span>
+};
+
+}  <span class="c">// namespace natdiag</span></code></pre>
+
+<h3>5.2 输出形状（M2 直接消费）</h3>
+
+<pre><code>{
+  <span class="s">"verdict"</span>: <span class="s">"silent"</span>,
+  <span class="s">"verdict_text"</span>: <span class="s">"NAT-PMP/PCP 与 UPnP 请求均已发出，60 秒内无应答"</span>,
+  <span class="s">"remediation"</span>: [<span class="s">"manual_port_forward"</span>],
+  <span class="s">"sampled_seconds"</span>: 60,
+  <span class="s">"slots"</span>: [
+    { <span class="s">"transport"</span>:<span class="s">"natpmp"</span>, <span class="s">"protocol"</span>:<span class="s">"tcp"</span>, <span class="s">"state"</span>:<span class="s">"pending"</span>,
+      <span class="s">"external_port"</span>:<span class="k">null</span>, <span class="s">"log_lines"</span>:21 },
+    { <span class="s">"transport"</span>:<span class="s">"natpmp"</span>, <span class="s">"protocol"</span>:<span class="s">"udp"</span>, <span class="s">"state"</span>:<span class="s">"pending"</span>, <span class="s">"log_lines"</span>:21 },
+    { <span class="s">"transport"</span>:<span class="s">"upnp"</span>,   <span class="s">"protocol"</span>:<span class="s">"tcp"</span>, <span class="s">"state"</span>:<span class="s">"pending"</span>, <span class="s">"log_lines"</span>:62 },
+    { <span class="s">"transport"</span>:<span class="s">"upnp"</span>,   <span class="s">"protocol"</span>:<span class="s">"udp"</span>, <span class="s">"state"</span>:<span class="s">"pending"</span>, <span class="s">"log_lines"</span>:62 }
+  ],
+  <span class="s">"listen"</span>: { <span class="s">"ok"</span>: [<span class="s">"TCP 192.168.1.100:6881"</span>, <span class="s">"uTP 192.168.1.100:6881"</span>, <span class="s">"..."</span>], <span class="s">"failed"</span>: [] },
+  <span class="s">"external_ip"</span>: <span class="s">"203.0.113.7"</span>,
+  <span class="s">"external_ip_reliable"</span>: <span class="k">false</span>
+}</code></pre>
+
+<p><code>external_ip_reliable</code> 恒为 <code>false</code> 除非对应 slot 为 <code>mapped</code>——这是第二节那个坑的代码级防线，不是注释级约定。</p>
+<p>slot 中<strong>不含</strong> <code>error_code</code> / <code>error_text</code>：草案原有这两个字段，但 <code>rejected</code> 状态取消后它们无处安放，错误信息统一移入顶层 <code>unattributed_errors</code> 数组（vector，一条不丢）。差异见 12.1。</p>
+
+<h2>六、判定规则表（diagnosis.cpp 的规格，也是测试用例来源）</h2>
+
+<table>
+<tr><th style="width:230px">观察</th><th style="width:110px">verdict</th><th>处置建议</th></tr>
+<tr><td>任一 slot 为 <code>mapped</code></td><td class="ok">working</td><td><code>none</code></td></tr>
+<tr><td>存在 <code>rejected</code>，且无 <code>mapped</code></td><td class="warn">refused</td><td><code>manual_port_forward</code> + 展示网关错误码</td></tr>
+<tr><td>全部 <code>pending</code>，且 <code>log_lines</code> 总和 &gt; 0</td><td class="bad">silent</td><td><code>manual_port_forward</code>（本机实测形态）</td></tr>
+<tr><td>全部 <code>unmapped</code> 或 <code>log_lines</code> 为 0</td><td class="dim">disabled</td><td><code>enable_protocol</code></td></tr>
+<tr><td><code>sampled_seconds</code> &lt; 阈值</td><td class="dim">insufficient</td><td><code>sample_longer</code></td></tr>
+</table>
+
+<div class="note">
+<b>采样阈值标为假设值。</b>默认取 15 秒，依据只是「比实测 60 秒窗口短」，没有协议层的重试周期数据支撑。<code>libtorrent</code> 的实际重试节奏要在 M1b 联调时测出来再校准。现在写成可配置常量，不写成魔法数。
+</div>
+
+<h2>七、构建与依赖需求</h2>
+
+<table>
+<tr><th style="width:150px">项目</th><th>结论</th></tr>
+<tr><td>新增第三方库</td><td><b class="ok">无</b>。JSON 手写（字段固定，不引 nlohmann）；测试用手写断言（不引 Catch2，此环境装包成本高于收益）</td></tr>
+<tr><td>已有依赖</td><td>Boost 1.86 头文件、libtorrent 2.0.11 静态/动态库，均已就位</td></tr>
+<tr><td>libtorrent 传播范围</td><td>只到 <code>adapt.cpp</code>。公共头 <code>natdiag.hpp</code> 不 include 任何 libtorrent 头，宿主不需要为了用诊断而引引擎头</td></tr>
+<tr><td>新增目录</td><td><code>engine-probe/natdiag/</code>（工程内 8 个目录层级）</td></tr>
+<tr><td>磁盘增量</td><td>源码 &lt; 100 KB；构建产物约 2 MB。<b>不动</b> <code>C:\boost</code>、<code>C:\libtorrent</code></td></tr>
+<tr><td>新装软件/权限</td><td><b class="ok">无</b>。不需要管理员、不需要改安全策略、不需要放开 reg.exe</td></tr>
+</table>
+
+<h2>八、验证方案</h2>
+
+<h3>第一级：单元测试（不碰网络）</h3>
+<p>判定表 5 行 + 状态机 6 类边界，全部用合成事件驱动。<code>ctest</code> 一条命令跑完，秒级。</p>
+
+<h3>第二级：golden 回归（真实网络）</h3>
+<p>用同一份 Debian 种子重跑探针，结论必须与基线一致：</p>
+
+<table>
+<tr><th style="width:180px">基线项</th><th style="width:150px">值（probe-run2.log）</th><th>允许偏差</th></tr>
+<tr><td>listen socket 数</td><td class="n">6</td><td>≥ 4（网络栈差异）</td></tr>
+<tr><td>NAT-PMP/PCP TCP</td><td class="n">无应答</td><td>必须一致</td></tr>
+<tr><td>NAT-PMP/PCP UDP</td><td class="n">无应答</td><td>必须一致</td></tr>
+<tr><td>UPnP-IGD TCP / UDP</td><td class="n">无应答</td><td>必须一致</td></tr>
+<tr><td>log lines</td><td class="n">21 / 62</td><td>≥ 1（数量随重试浮动）</td></tr>
+<tr><td>external ip</td><td class="n">203.0.113.7</td><td>允许变化（PPPoE 重新拨号）</td></tr>
+<tr><td>verdict</td><td class="n">silent</td><td>必须一致</td></tr>
+</table>
+
+<div class="note bad">
+<b>基线文件先转码再入库。</b><code>probe-run2.log</code> 是 UTF-16LE（PowerShell <code>*&gt;</code> 的默认行为），<code>grep</code>／<code>sed</code>／<code>diff</code> 对它一律静默返回空结果——我第一次查它时就是这样，差点把「匹配不到」当成「日志里没有」。<code>iconv -f UTF-16LE -t UTF-8</code> 转成 <code>probe-run2-utf8.log</code> 后归档，之后所有比对只认 UTF-8。
+</div>
+
+<h3>第三级：行为等价性</h3>
+<p>旧二进制与新二进制在同一份输入下，<code>verdict</code> 与 4 个 slot 的 state 必须逐项相同。人读文本格式允许变（会加处理建议），但结论不允许变。</p>
+
+<h2>九、明确不做的事</h2>
+
+<table>
+<tr><th style="width:170px">不做</th><th>理由</th></tr>
+<tr><td>不实现 STUN 客户端</td><td>libtorrent 已通过 <code>external_ip_alert</code> 给外网 IP。自实现会与引擎结论冲突，且 M0 的 Python STUN 实验是分析工具，不进产品代码</td></tr>
+<tr><td>不做端口扫描 / 连通性探测</td><td>那是「验证」不是「诊断」，且会触发安全软件的端口扫描告警</td></tr>
+<tr><td>不做 UI</td><td>M2 的事。本模块只保证 JSON 契约稳定</td></tr>
+<tr><td>不碰 libtorrent settings</td><td>模块只观察，不改宿主配置。settings 片段仍由宿主决定</td></tr>
+<tr><td>不做跨平台抽象层</td><td>诊断逻辑本身是跨平台的，libtorrent 已抹平。现在包一层是空转</td></tr>
+</table>
+
+<h2>十、风险与回退</h2>
+
+<table>
+<tr><th style="width:200px">风险</th><th style="width:80px">概率</th><th>应对</th></tr>
+<tr><td>抽模块时行为悄然改变</td><td class="n">中</td><td>第三级验证 + 保留旧 <code>main.cpp</code> 为 <code>main.legacy.cpp</code>，双二进制同跑比对后再删</td></tr>
+<tr><td>libtorrent alert 字段名与预期不同</td><td class="n">低</td><td>上一轮已踩过（<code>portmap_transport</code> 只有两个值）。适配层集中在 1 个文件，改起来只动一处</td></tr>
+<tr><td>过度设计，模块比原文更复杂</td><td class="n">中</td><td>总行数设上限 1300 行。超出就砍功能，不加抽象</td></tr>
+<tr><td>golden 日志转码后内容不符</td><td class="n">低</td><td>转码后立即 diff 关键行（diagnosis 段 12 行），确认无丢字</td></tr>
+</table>
+
+<p><b>回退方式：</b>全部新增文件在 <code>natdiag/</code> 目录内，删目录即回滚。对 <code>engine-probe</code> 的两处修改在动手前先备份为 <code>*.bak</code>，一条 <code>mv</code> 即恢复。</p>
+
+<h2>十一、需要你确认的三件事</h2>
+
+<table>
+<tr><th style="width:26px">#</th><th>待定项</th><th style="width:300px">我的建议</th></tr>
+<tr><td class="n">1</td><td>目录位置：放 <code>engine-probe/natdiag/</code> 还是提到工作区顶层 <code>natdiag/</code></td>
+<td>放顶层。它是生产模块，不是探针的附属物；未来 <code>engine-service</code> 也要链接它</td></tr>
+<tr><td class="n">2</td><td>是否保留 <code>main.legacy.cpp</code> 做双二进制比对</td><td>保留。多 5 分钟，换一次真验证</td></tr>
+<tr><td class="n">3</td><td>是否现在就拆 JSON 序列化</td><td>拆。M1b 的 HTTP 接口第一件事就是要它，现在做省一次返工</td></tr>
+</table>
+
+<div class="note info">
+确认后我按「文件清单 → 头文件 → 适配层 → 状态机 → 判定 → 序列化 → 测试」的顺序推进，每个模块编一次验一次，不攒到最后一起编。中途每完成一级汇报一次，不一口气推完。
+</div>
+
+<h2>十二、实现与本文档的差异（交付后补记）</h2>
+
+<div class="note bad">
+<b>先纠正本文档第二节第 2 条判断错误。</b>我当时写「<code>portmap_error_alert</code> 的真实协议字段被丢弃」，<b>这是错的</b>。
+读头文件确认：这个 alert 根本没有 <code>map_protocol</code> 字段，只有 <code>mapping</code>（per-socket 索引）、
+<code>map_transport</code>、<code>local_address</code>、<code>error</code>。原代码写 <code>none</code> 是无奈，不是疏忽。
+</div>
+
+由此引出的更严重设计缺陷仍然成立，但根因不同：不是「丢字段」，而是**没有处理「协议归属本来就拿不到」这件事**——用单键 map 导致同一 transport 的多条错误互相覆盖。
+
+我在实现中途试图用 <code>(transport, local_address, mapping)</code> 三元组关联表反查协议，读了
+<code>session_impl.cpp:2336</code> 的 <code>remap_ports()</code>，确认每个 mapper 确实先 tcp 后 udp 注册、索引看似可推断。
+但随后放弃了这个方案，理由有两条：
+
+1. <code>delete_mapping</code> 之后索引是否复位**未写在文档里**，而 <code>remap_ports</code> 会被网络变化反复触发；
+2. 产品上 TCP 还是 UDP 被拒**不改变处置动作**，用户要的是「能不能通」和「怎么办」。
+
+于是 <code>SlotState::rejected</code> 与关联表一并删除。留一个永远产生不了的状态是垃圾，还会让测试出现盲区。
+
+<h3>12.1 数据结构差异</h3>
+
+<table>
+<tr><th style="width:220px">项</th><th style="width:200px">本文档原计划</th><th>实际实现</th></tr>
+<tr><td><code>SlotState</code></td><td class="n">unmapped / pending / mapped / <b>rejected</b></td><td>unmapped / pending / mapped（删 rejected）</td></tr>
+<tr><td>错误记录</td><td>Slot 级 <code>error_code</code> + <code>error_text</code></td><td><code>Snapshot::unattributed_errors</code>（vector，一条不丢）</td></tr>
+<tr><td>关联表</td><td>MapKey 三元组 → Protocol</td><td>删除</td></tr>
+<tr><td><code>NatEvent</code></td><td>含 <code>mapping</code> + <code>local_address</code></td><td>删除，回到 <code>kind/transport/protocol/port/error_code/detail</code></td></tr>
+<tr><td><code>Snapshot</code></td><td>未列</td><td>新增 <code>min_sample_seconds</code>（解释 insufficient 的由来）</td></tr>
+<tr><td>判定优先级</td><td>表格顺序</td><td>mapped → refused → insufficient → silent → disabled（refused 是硬证据，不被时长压制）</td></tr>
+</table>
+
+<h3>12.2 文件差异</h3>
+
+<table>
+<tr><th style="width:280px">项</th><th style="width:200px">计划</th><th>实际</th></tr>
+<tr><td><code>natdiag</code> 目标数</td><td>1 个静态库</td><td><b>2 个</b>：<code>natdiag</code>（零 libtorrent）+ <code>natdiag_lt</code>（仅 adapt.cpp）</td></tr>
+<tr><td>适配层头位置</td><td><code>src/adapt.hpp</code></td><td><code>include/natdiag/lt_adapt.hpp</code>（宿主才 include 得到）</td></tr>
+<tr><td>测试框架头</td><td>未列</td><td><code>tests/test_framework.hpp</code> + <code>tests/helpers.hpp</code></td></tr>
+<tr><td>回归比对</td><td>「双二进制比对」</td><td><code>engine-probe/regress.py</code>（用 Python，不是 shell）</td></tr>
+<tr><td>文件总数</td><td class="n">15（13 新增 + 2 修改）</td><td class="n">20（17 新增 + 3 修改）</td></tr>
+</table>
+
+<p>拆两个 target 是本次最有价值的偏离：核心库不依赖引擎，单元测试编译秒级完成，
+也不需要配置 libtorrent 环境。<code>torrent-rasterbar</code> 必须以 PUBLIC 传播
+（因为 <code>lt_adapt.hpp</code> 暴露了引擎类型），这点写错会导致宿主编译不过——我踩了一次。</p>
+
+<h3>12.3 验证结果</h3>
+
+<table>
+<tr><th style="width:200px">级别</th><th style="width:170px">结果</th><th>证据</th></tr>
+<tr><td>单元测试</td><td class="ok">27 例 / 88 断言全过</td><td>覆盖 5 种 Verdict、乱序/重复事件、跨 socket 场景、JSON 转义、D-01 回归 3 例</td></tr>
+<tr><td>回归比对（60 s）</td><td class="ok">PASS</td><td>VERDICT 一字不差，四个 slot 全为 <code>no_reply</code> 一致</td></tr>
+<tr><td>回归比对（20 s）</td><td class="ok">PASS</td><td>同上，未受采样时长影响</td></tr>
+<tr><td>golden 转码</td><td class="ok">无损</td><td>UTF-16LE → UTF-8，114 行不变，无 BOM</td></tr>
+</table>
+
+<h3>12.4 两个环境坑（写进 README）</h3>
+
+<div class="note">
+<b>bash 脚本里 fork Windows 子进程返回 127。</b>我先用 <code>regress.sh</code> 写比对，两个二进制都返回 127、
+日志 0 字节、无任何错误信息，排查方向一度被带到二进制本身（我单独验了 legacy.exe 是正常的）。
+最后确认是 shell 沙箱限制，改 Python <code>subprocess</code> 后一次通过。<br><br>
+<b>运行期 DLL 不能依赖 PATH。</b>脚本继承的 PATH 混着 <code>C:\Program Files\...</code> 条目，
+冒号被当作分隔符切碎。改用 CMake <code>POST_BUILD</code> 把 DLL 复制到 exe 同目录。
+</div>
+
+<h3>12.5 D-01：<code>pending</code> 曾是死枚举（交付后复核发现并修复）</h3>
+
+<div class="note">
+<b>问题</b>：<code>SlotState::pending</code> 在 <code>collector.cpp</code> 里从未被赋值，<code>snapshot()</code> 只是复制。
+后果两条：① 5.2 承诺的 <code>"state":"pending"</code> 永不出现，M2 无法区分「根本没试」和「请求在飞」；
+② 判定逻辑里 <code>state == pending</code> 是死分支，测试对 <code>pending</code> 零引用——这个状态从未被验证过。<br><br>
+<b>为什么漏掉</b>：删 <code>rejected</code> 时我审查了状态集合，但只核对了「删掉的那个」，没有反向核对「留下的每个值是否都有产生路径」。<br><br>
+<b>修复</b>：<code>map_log</code> 到达时把该 transport 下 <code>unmapped</code> 的 slot 推进为 <code>pending</code>，已 <code>mapped</code> 的不降级。补 3 条回归用例：推进 / 不降级 / JSON 中真实出现。<br><br>
+<b>验证</b>：L1 —— 27 例 88 断言 0 失败；L2 —— golden 回归在修复后重跑仍 <code>PASS</code>（对外结论零变化）；L3 —— 实测四个 slot 全部输出 <code>"state":"pending"</code>，log_lines 19/19/55/55。<br><br>
+<b>影响面</b>：不影响既有验收结论。这是兑现已承诺的契约，不是行为变更。
+</div>
+
+<div class="foot">
+natdiag module spec · 依据 engine-probe/src/main.cpp 314 行实读 · 基线 probe-run2.log（UTF-16LE，待转码）
+</div>
+
+</div>
+<!-- ml-body:s -->
+<div class="prog" aria-hidden="true"></div>
+<script>
+(function () {
+  var root = document.documentElement;
+  root.classList.add('js');
+
+  if (!('IntersectionObserver' in window)) {
+    root.classList.remove('js');
+    window.__mlReady = true;
+    return;
+  }
+
+  var MAX_STEP = 6;
+  var STEP_MS = 45;
+
+  var targets = Array.prototype.slice.call(document.querySelectorAll('.wrap > *'));
+
+  var io = new IntersectionObserver(function (entries) {
+    var i = 0;
+    for (var n = 0; n < entries.length; n++) {
+      var e = entries[n];
+      if (!e.isIntersecting) continue;
+      var idx = i < MAX_STEP ? i : MAX_STEP;
+      e.target.style.setProperty('--d', idx * STEP_MS + 'ms');
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+      i++;
+    }
+  }, { rootMargin: '0px 0px -6% 0px', threshold: 0.01 });
+
+  for (var k = 0; k < targets.length; k++) io.observe(targets[k]);
+
+  window.__mlReady = true;
+
+  var prog = document.querySelector('.prog');
+  if (!prog) return;
+
+  var pending = false;
+
+  function paint() {
+    var max = root.scrollHeight - window.innerHeight;
+    var ratio = max > 0 ? window.scrollY / max : 0;
+    if (ratio < 0) ratio = 0;
+    else if (ratio > 1) ratio = 1;
+    prog.style.transform = 'scaleX(' + ratio + ')';
+    if (window.scrollY > 48) prog.classList.add('on');
+    else prog.classList.remove('on');
+    pending = false;
+  }
+
+  function tick() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(paint);
+  }
+
+  window.addEventListener('scroll', tick, { passive: true });
+  window.addEventListener('resize', tick, { passive: true });
+  paint();
+})();
+</script>
+<!-- ml-body:e -->
+</body>
+</html>

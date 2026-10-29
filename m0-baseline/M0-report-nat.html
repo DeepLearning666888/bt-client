@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>M0 · NAT 穿透与入站可达性实测</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f6f8;color:#1c1f23;
+ font:15px/1.7 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:48px 28px 80px}
+h1{font-size:30px;margin:0 0 6px;letter-spacing:-.4px}
+.sub{color:#6b7280;font-size:14px;margin-bottom:34px}
+h2{font-size:20px;margin:46px 0 14px;padding-bottom:9px;border-bottom:2px solid #e5e7eb}
+h3{font-size:16px;margin:26px 0 10px;color:#111827}
+p{margin:10px 0}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;background:#fff;
+ border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+th{background:#eef1f5;text-align:left;padding:10px 13px;font-weight:600;color:#374151;
+ border-bottom:1px solid #e5e7eb;font-size:13px}
+td{padding:9px 13px;border-bottom:1px solid #f1f3f5}
+tr:last-child td{border-bottom:none}
+.ok{color:#0f7b40;font-weight:600}
+.bad{color:#b42318;font-weight:600}
+.dim{color:#9ca3af}
+.card{background:#fff;border-radius:10px;padding:20px 22px;margin:18px 0;
+ box-shadow:0 1px 3px rgba(0,0,0,.07);border-left:4px solid #d1d5db}
+.card.warn{border-left-color:#f04438;background:#fff8f7}
+.card.good{border-left-color:#12b76a;background:#f6fef9}
+.card.info{border-left-color:#2e90fa;background:#f5f9ff}
+.card h3{margin-top:0}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:20px 0}
+.kpi div{background:#fff;border-radius:10px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.kpi b{display:block;font-size:24px;letter-spacing:-.5px;margin-bottom:3px}
+.kpi span{color:#6b7280;font-size:12.5px}
+.kpi .v-red{color:#b42318}.kpi .v-green{color:#0f7b40}.kpi .v-blue{color:#175cd3}
+code{background:#eef1f5;padding:1.5px 6px;border-radius:4px;font-size:13px;
+ font-family:Consolas,Monaco,monospace}
+.bar{height:26px;background:#eef1f5;border-radius:5px;overflow:hidden;margin:6px 0 3px;
+ position:relative}
+.bar i{display:block;height:100%}
+.bl{font-size:12.5px;color:#6b7280;display:flex;justify-content:space-between}
+ul{padding-left:22px}li{margin:6px 0}
+.foot{margin-top:50px;padding-top:20px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12.5px}
+</style></head><body><div class="wrap">
+
+<h1>NAT 穿透与入站可达性实测</h1>
+<div class="sub">BT 下载客户端 · M0 技术验证第二轮 · 2026-10-27 · 测试机 192.168.1.100</div>
+
+<div class="card good">
+<h3>一句话结论</h3>
+<p>这台机器的网络是<b>锥形 NAT + 端口保持、公网 IP 真实</b>——这是 BT 客户端能遇到的最好条件。
+但路由器的 UPnP 是<b>关闭的</b>，所以端口映射无法自动建立；实测结果：<b>12 个外部节点（8 国）
+全部连不进来</b>，上传速率为 <b>0</b>。客户端在这张网络上只能做「纯下载者」。</p>
+<p style="margin-bottom:0">好消息是：下载速度没被拖垮——不靠入站也能跑到 <b>11~17 MB/s</b>、130+ 连接。
+坏消息是：做种、PT 站保 ratio、稀有种子互助，全部失效。</p>
+</div>
+
+<div class="kpi">
+<div><b class="v-green">锥形 NAT</b><span>endpoint-independent，5 个 STUN 服务器一致</span></div>
+<div><b class="v-green">203.0.113.7</b><span>公网真地址，非 CGNAT</span></div>
+<div><b class="v-red">0 / 12</b><span>外部节点可达（8 国）</span></div>
+<div><b class="v-red">0.000 MB/s</b><span>上传（90 采样全零）</span></div>
+</div>
+
+<h2>一、测的是什么</h2>
+<p>BT 的速度由两个互相独立的因素决定：<b>能主动连上多少 peer</b>，和<b>能被动接受多少 peer</b>。
+上一轮已经证明磁盘和 CPU 都不是瓶颈，互联网实测只有 8.58 MB/s 而本机 BT 能跑 119 MB/s，
+差 14 倍。这一轮专门回答剩下那个变量：<b>能不能被外面连进来</b>。</p>
+<p>方法上刻意避开「客户端自己说自己通了」——所有判断都以外部实测为准：</p>
+<ul>
+<li>用 STUN 直接观测 NAT 的映射行为，而不是听路由器描述自己</li>
+<li>用 SSDP 组播 + 单播两种方式找 UPnP 网关，绕开组播被拦的干扰</li>
+<li>起本地监听端口，让境外节点主动来连，看能不能连上</li>
+<li>量化代价：在无入站条件下测下载、上传、连接数</li>
+</ul>
+
+<h2>二、NAT 类型：最好的一档</h2>
+<p>同一个 UDP 套接字（本地源端口 <code>50062</code>）依次向 5 个不同厂商的 STUN 服务器发请求。
+如果 NAT 是锥形，所有服务器应该看到同一个映射端口；如果是对称型，每个目标都会分到不同的端口。</p>
+<table><tr><th>STUN 服务器</th><th>观测到的公网映射</th></tr>
+<tr><td>stun.l.google.com</td><td class="ok">203.0.113.7:50062</td></tr><tr><td>stun1.l.google.com</td><td class="ok">203.0.113.7:50062</td></tr><tr><td>stun.cloudflare.com</td><td class="ok">203.0.113.7:50062</td></tr><tr><td>stun.miwifi.com</td><td class="ok">203.0.113.7:50062</td></tr><tr><td>stun.qq.com</td><td class="dim">timeout</td></tr><tr><td>stun.chat.bilibili.com</td><td class="ok">203.0.113.7:50062</td></tr>
+</table>
+<p><b>5 个服务器全部返回 <code>203.0.113.7:50062</code>，映射端口和本地源端口完全一致。</b>
+这叫 endpoint-independent mapping，也就是锥形 NAT，而且带端口保持。这是 UDP 打洞和端口映射最容易成功的一类 NAT。</p>
+<div class="card info">
+<p style="margin:0"><b>为什么这条重要：</b>锥形 NAT 意味着只要有一次成功的端口映射，
+外部就能稳定连进来。它不是那种「怎么配都没用」的对称型 NAT。所以问题不在运营商，
+在本机网络里某一个可用开关没打开。</p>
+</div>
+
+<h2>三、UPnP 网关：不存在</h2>
+<table>
+<tr><th>探测方式</th><th>目标</th><th>结果</th></tr>
+<tr><td>SSDP 组播 <code>ssdp:all</code></td><td>239.255.255.250:1900</td><td class="bad">5 秒零响应</td></tr>
+<tr><td>SSDP 单播 ×3 种 ST</td><td>192.168.1.1:1900</td><td class="bad">全部超时</td></tr>
+<tr><td>常见 IGD 描述路径 ×9</td><td>网关 80/1900/49152/5000</td><td class="bad">无命中</td></tr>
+</table>
+<p>网关是 <code>192.168.1.1</code>，80 端口有 Web 管理界面（HTTP 200），说明设备在线、只是
+<b>UPnP 服务没开</b>。单播也超时，排除了「组播被交换机或系统拦截」这个干扰项。</p>
+
+<div class="card warn">
+<h3>还有一个更硬的限制：测量用的客户端本身不支持 UPnP</h3>
+<p>aria2 1.37.0 官方 Windows 构建<b>没有编译 UPnP 支持</b>：</p>
+<table style="margin:10px 0"><tr><th>检查项</th><th>结果</th></tr>
+<tr><td><code>--enable-upnp</code> 选项</td><td class="bad">不存在（<code>--help</code> 中 upnp 命中 0 次）</td></tr>
+<tr><td>二进制符号 <code>miniupnpc</code> / <code>upnpDiscover</code></td><td class="bad">命中 0 次</td></tr>
+</table>
+<p style="margin-bottom:0">所以这一轮<b>无法验证「如果路由器开了 UPnP，自动映射能不能成功」</b>。
+这条不能算在 aria2 头上，但也确实没测到。</p>
+</div>
+
+<h2>四、入站可达性：12 个节点全灭</h2>
+<p>在本机起 TCP 监听，然后请 6 个境外节点（每次）主动来连这个公网端口。分两个端口测：
+一个是全新的 <code>7001</code>，一个是 BT 默认的 <code>6881</code>。</p>
+<table><tr><th>测试</th><th>端口</th><th>外部可达</th><th>实际连进来的连接</th><th>公开报告</th></tr>
+<tr><td>no-mapping-fresh-port</td><td>7001</td><td class="bad">0 / 6 可达</td><td>0</td><td><a href="https://check-host.net/check-report/53b9a7efk8c3">报告</a></td></tr><tr><td>bt-default-port</td><td>6881</td><td class="bad">0 / 6 可达</td><td>0</td><td><a href="https://check-host.net/check-report/53b9b39ak20d">报告</a></td></tr>
+</table>
+<p>全部是 <b>Connection timed out</b>，不是 refused。这个区别有意义：refused 说明包到了机器上被拒绝，
+timeout 说明包在中间就被静默丢弃了——典型的 NAT 无映射行为。</p>
+<div class="card warn">
+<p style="margin:0"><b>必须说清的歧义：</b>本机 Windows 防火墙三个配置文件全是启用状态。
+所以「外部连不进来」是<b>「NAT 没有端口映射」和「本机防火墙」两层叠加</b>的结果，
+单凭外部结果分不开两者各占多少。但结论不受影响——两种情况下被动接入都不可用。</p>
+</div>
+
+<h2>五、代价有多大：下载没事，上传归零</h2>
+<p>在完全没有入站能力的条件下，跑同一条 Ubuntu 26.10 官方种子 180 秒：</p>
+<table>
+<tr><th>指标</th><th>数值</th></tr>
+<tr><td>平均下载（稳态）</td><td><b>11.37 MB/s</b></td></tr>
+<tr><td>峰值 / 最好 5 秒均值</td><td>17.38 / 16.96 MB/s</td></tr>
+<tr><td>最大连接数 / 最大做种者数</td><td>130 / 52</td></tr>
+<tr><td>CPU 单核占用</td><td>30.1%</td></tr>
+<tr><td>内存 / 句柄</td><td>33 MB / 287</td></tr>
+</table>
+<p>连接数爬升轨迹（说明 peer 供给是逐步积累的，不是瞬时可用的）：</p>
+<table><tr><th>时刻</th><th>连接数</th><th>速度</th></tr><tr><td>t30</td><td>96</td><td>2.31 MB/s</td></tr><tr><td>t60</td><td>100</td><td>14.74 MB/s</td></tr><tr><td>t120</td><td>115</td><td>16.40 MB/s</td></tr><tr><td>t_end</td><td>60</td><td>13.89 MB/s</td></tr></table>
+<p>结论很清楚：<b>入站能力缺失不会把下载拖垮</b>。热门种子 peer 足够多，主动连出去就能跑满。</p>
+
+<h3>但上传是彻底废的</h3>
+<div class="bar"><i style="width:0.4%;background:#b42318"></i></div>
+<div class="bl"><span>上传</span><span>0.000 MB/s</span></div>
+<div class="bar"><i style="width:88%;background:#12b76a"></i></div>
+<div class="bl"><span>下载</span><span>13.33 MB/s</span></div>
+<p>测这个的时候我们已经持有 <b>3.1 GB</b> 验证过的分片、有 <b>159</b> 个活跃连接、
+对端确实可能需要这些数据。结果：<b>90 个采样，上传全部为 0</b>，峰值也是 0。</p>
+<p>因为没有任何 peer 能主动连我们，我们只能在我们自己发起的连接上顺带传一点；
+而这些连接的对端要么已经拥有这些分片，要么在按 tit-for-tat 节流。</p>
+
+<h2>六、这对产品意味着什么</h2>
+<div class="card info">
+<h3>必须做的功能（不是加分项，是底线）</h3>
+<ul style="margin-bottom:0">
+<li><b>自动端口映射</b>：UPnP + NAT-PMP 都要做，并且要真的能验证成功，而不是「尝试过」</li>
+<li><b>可观测诊断</b>：明确告诉用户「当前无法被动接入，速度可能受限」，并给出可操作指引
+（开路由器 UPnP、或手动转发端口）。这条比任何调优都值钱——用户投诉最多的就是「一直 0 KB/s」却不知道为什么</li>
+<li><b>uTP 打洞</b>：这张网络是锥形 NAT，打洞成功率会明显高于对称型 NAT。libtorrent 有 BEP-55，
+这是 ARIA2 完全不具备的能力</li>
+</ul>
+</div>
+<div class="card warn">
+<h3>不能凭这一轮下的结论</h3>
+<p style="margin:0">这轮用的 aria2 是 <b>TCP-only、无 uTP、无 UPnP/NAT-PMP</b> 的客户端。
+所以「被动接入不可用」只能说明<b>这个客户端在这张网络上不行</b>，
+不能推出「libtorrent 方案也不行」。libtorrent 同时具备自动映射和 UDP 打洞，
+在锥形 NAT 上这两个能力都值得实测——那是下一轮该做的事。</p>
+</div>
+
+<h2>七、局限与未验证项</h2>
+<ul>
+<li><b>本机防火墙的独立影响没测</b>：三层防火墙全开，与 NAT 叠加，无法单独归因</li>
+<li><b>aria2 的 UPnP 映射成功率无法测</b>：该构建根本没有 UPnP 代码</li>
+<li><b>uTP / UDP 打洞完全未测</b>：aria2 不支持，这是最该补的一块</li>
+<li><b>只在一条网络上测过</b>：结论描述的是「这条联通宽带 + 这台光猫/路由器」，不代表所有用户</li>
+<li><b>上传为 0 有第二种解释</b>：该种子有 48~52 个做种者，对端可能本来就不缺数据。所以 0 是「与无入站一致」，但不足以单独证明因果</li>
+<li><b>写入放大没有稳定复现</b>：本轮 180 秒测中出现 1.68 倍（19.13 写 / 11.37 下载），
+但随后可重复的测又是 1.0 倍左右，没找到触发条件，先记为待查</li>
+</ul>
+
+<h2>八、数据文件</h2>
+<table><tr><th>文件</th><th>内容</th></tr>
+<tr><td><code>out/res_nat.json</code></td><td>5 个 STUN 服务器的原始映射结果</td></tr>
+<tr><td><code>out/res_upnp.json</code></td><td>网关地址、SSDP 响应、IGD 路径探测</td></tr>
+<tr><td><code>out/res_inbound.json</code></td><td>外部节点连通性、实际落入的连接</td></tr>
+<tr><td><code>out/res_swarm_nat.json</code></td><td>真实 swarm 180 秒逐秒序列</td></tr>
+<tr><td><code>out/res_upload_nat.json</code></td><td>上传能力 90 秒采样</td></tr>
+</table>
+
+<div class="foot">
+所有判断基于外部实测，未使用任何「客户端自报」数据。
+外部连通性来自 check-host.net 的多国探测节点，报告链接见第四节表格。
+</div>
+</div></body></html>

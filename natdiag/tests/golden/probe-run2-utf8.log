@@ -1,0 +1,114 @@
+=== engine-probe ===
+libtorrent : 2.0.11.0
+listen port: 6881 (TCP + uTP)
+protocols  : UPnP=on NAT-PMP/PCP=on LSD=on DHT=on
+duration   : 60s
+
+source     : torrent file, 3024 piece(s), 792723456 bytes
+[listen ] TCP 192.168.1.100:6881
+[listen ] uTP 192.168.1.100:6881
+[listen ] TCP 127.0.0.1:6881
+[listen ] uTP 127.0.0.1:6881
+[listen ] TCP 172.20.10.1:6881
+[listen ] uTP 172.20.10.1:6881
+[map log] NAT-PMP/PCP      found gateway at: 192.168.1.1
+[map log] NAT-PMP/PCP      failed to find default route for "{00000000-0000-0000-0000-000000000000}" 172.20.10.1
+[map log] NAT-PMP/PCP      closing
+[map log] UPnP-IGD         broadcasting search for rootdevice
+[map log] UPnP-IGD         broadcasting search for rootdevice
+[map log] NAT-PMP/PCP      add-mapping: proto: TCP port: 6881 local-port: 6881 action: add ttl: 0
+[map log] NAT-PMP/PCP      update-mapping: proto: TCP port: 6881 local-port: 6881 action: add ttl: 0
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 0 action: add transport: PCP proto: TCP local: 6881 external: 6881 ttl: 3600 ]
+[map log] NAT-PMP/PCP      add-mapping: proto: UDP port: 6881 local-port: 6881 action: add ttl: 0
+[map log] NAT-PMP/PCP      update-mapping: proto: UDP port: 6881 local-port: 6881 action: add ttl: 0
+[map log] UPnP-IGD         adding port map: [ protocol: tcp ext_port: 6881 local_ep: 192.168.1.100:6881 device: {11111111-1111-1111-1111-111111111111}] 
+[map log] UPnP-IGD         adding port map: [ protocol: udp ext_port: 6881 local_ep: 192.168.1.100:6881 device: {11111111-1111-1111-1111-111111111111}] 
+[map log] UPnP-IGD         adding port map: [ protocol: tcp ext_port: 6881 local_ep: 172.20.10.1:6881 device: {00000000-0000-0000-0000-000000000000}] 
+[map log] UPnP-IGD         adding port map: [ protocol: udp ext_port: 6881 local_ep: 172.20.10.1:6881 device: {00000000-0000-0000-0000-000000000000}] 
+[torrent] added, info-hash 7acf8fb590b2060dd9c3146ef770169d593433b0
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:1900
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:56169
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.4:37443/upnpap.xml (0)
+[map log] UPnP-IGD         connecting to: http://192.168.50.4:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.3:37443/upnpap.xml (1)
+[map log] UPnP-IGD         connecting to: http://192.168.50.3:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.9:37443/upnpap.xml (2)
+[map log] UPnP-IGD         connecting to: http://192.168.50.9:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.8:37443/upnpap.xml (3)
+[map log] UPnP-IGD         connecting to: http://192.168.50.8:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.5:37443/upnpap.xml (4)
+[map log] UPnP-IGD         connecting to: http://192.168.50.5:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.13:37443/upnpap.xml (5)
+[map log] UPnP-IGD         connecting to: http://192.168.50.13:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.12:37443/upnpap.xml (6)
+[map log] UPnP-IGD         connecting to: http://192.168.50.12:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.2:37443/upnpap.xml (7)
+[map log] UPnP-IGD         connecting to: http://192.168.50.2:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.6:37443/upnpap.xml (8)
+[map log] UPnP-IGD         connecting to: http://192.168.50.6:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.1:37443/upnpap.xml (9)
+[map log] UPnP-IGD         connecting to: http://192.168.50.1:37443/upnpap.xml
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.4:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.9:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.13:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.3:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.8:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.5:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.2:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.1:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.6:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.12:37443/upnpap.xml: Forbidden
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 0 action: add transport: PCP proto: TCP local: 6881 external: 6881 ttl: 3600 ]
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 0 action: add transport: PCP proto: TCP local: 6881 external: 6881 ttl: 3600 ]
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.7:37443/upnpap.xml (10)
+[map log] UPnP-IGD         connecting to: http://192.168.50.7:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.11:37443/upnpap.xml (11)
+[map log] UPnP-IGD         connecting to: http://192.168.50.11:37443/upnpap.xml
+[map log] UPnP-IGD         found rootdevice: http://192.168.50.14:37443/upnpap.xml (12)
+[map log] UPnP-IGD         connecting to: http://192.168.50.14:37443/upnpap.xml
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.14:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.7:37443/upnpap.xml: Forbidden
+[map log] UPnP-IGD         error while fetching control url from: http://192.168.50.11:37443/upnpap.xml: Forbidden
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 0 action: add transport: PCP proto: TCP local: 6881 external: 6881 ttl: 3600 ]
+[map log] UPnP-IGD         broadcasting search for rootdevice
+[map log] UPnP-IGD         broadcasting search for rootdevice
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:1900
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:56169
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 0 action: add transport: PCP proto: TCP local: 6881 external: 6881 ttl: 3600 ]
+[ext ip ] 203.0.113.7
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 0 action: add transport: PCP proto: TCP local: 6881 external: 6881 ttl: 3600 ]
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 0 action: add transport: PCP proto: TCP local: 6881 external: 6881 ttl: 3600 ]
+[map log] UPnP-IGD         broadcasting search for rootdevice
+[map log] UPnP-IGD         broadcasting search for rootdevice
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:1900
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:56169
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 0 action: add transport: PCP proto: TCP local: 6881 external: 6881 ttl: 3600 ]
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 0 action: add transport: PCP proto: TCP local: 6881 external: 6881 ttl: 3600 ]
+[map log] NAT-PMP/PCP      update-mapping: proto: UDP port: 6881 local-port: 6881 action: add ttl: 0
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 1 action: add transport: PCP proto: UDP local: 6881 external: 6881 ttl: 3600 ]
+[map log] UPnP-IGD         broadcasting search for rootdevice
+[map log] UPnP-IGD         broadcasting search for rootdevice
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:1900
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:56169
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 1 action: add transport: PCP proto: UDP local: 6881 external: 6881 ttl: 3600 ]
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 1 action: add transport: PCP proto: UDP local: 6881 external: 6881 ttl: 3600 ]
+[map log] NAT-PMP/PCP      ==> port map [ mapping: 1 action: add transport: PCP proto: UDP local: 6881 external: 6881 ttl: 3600 ]
+[map log] UPnP-IGD         broadcasting search for rootdevice
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:1900
+[map log] UPnP-IGD         HTTP method m-search from 172.20.10.1:56169
+
+=== diagnosis ===
+listen        : 6 socket(s) bound
+NAT-PMP/PCP TCP : no inbound mapping reply in 60s
+NAT-PMP/PCP UDP : no inbound mapping reply in 60s
+UPnP-IGD TCP    : no inbound mapping reply in 60s
+UPnP-IGD UDP    : no inbound mapping reply in 60s
+log lines     : NAT-PMP/PCP = 21
+log lines     : UPnP-IGD = 62
+external ip   : 203.0.113.7
+metadata      : NOT received
+progress      : 86.37%
+peers         : 132 connected, 114 seeds
+rates         : down 7.70 MB/s, up 0.37 MB/s
+
+VERDICT: automatic inbound mapping UNAVAILABLE on this network

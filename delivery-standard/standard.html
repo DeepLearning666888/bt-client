@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>单人项目交付规范 v1.0 · 工序-标准-清单 的精简落地</title>
+<style>
+:root{
+  --bg:#0f1216; --panel:#161b22; --panel2:#1c232c; --line:#2a3441;
+  --tx:#e6edf3; --tx2:#9aa7b4; --tx3:#6b7887;
+  --ok:#3fb950; --warn:#d29922; --bad:#f85149; --info:#58a6ff; --acc:#a371f7;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:40px 24px 72px;background:var(--bg);color:var(--tx);
+  font:15px/1.72 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+.wrap{max-width:1080px;margin:0 auto}
+h1{font-size:27px;margin:0 0 6px;letter-spacing:-.4px}
+.sub{color:var(--tx2);font-size:14px;margin-bottom:28px}
+h2{font-size:19px;margin:44px 0 14px;padding-left:11px;border-left:3px solid var(--acc)}
+h3{font-size:15px;margin:24px 0 8px;color:var(--tx)}
+p{margin:11px 0}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px;background:var(--panel);
+  border-radius:8px;overflow:hidden}
+th{background:var(--panel2);text-align:left;padding:10px 13px;font-weight:600;color:var(--tx2);
+  font-size:12.5px;letter-spacing:.03em;border-bottom:1px solid var(--line)}
+td{padding:9px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.n{white-space:nowrap;font-variant-numeric:tabular-nums}
+code{background:var(--panel2);padding:1.5px 6px;border-radius:4px;font-size:12.5px;
+  font-family:"JetBrains Mono",Consolas,monospace;color:#79c0ff}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px;
+  overflow-x:auto;font-size:12.5px;line-height:1.62;margin:14px 0;
+  font-family:"JetBrains Mono",Consolas,monospace;color:var(--tx2)}
+pre b{color:var(--tx);font-weight:600}
+.ok{color:var(--ok);font-weight:600}
+.bad{color:var(--bad);font-weight:600}
+.warn{color:var(--warn);font-weight:600}
+.info{color:var(--info);font-weight:600}
+.dim{color:var(--tx3)}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.kpi div{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px}
+.kpi b{display:block;font-size:23px;line-height:1.3;letter-spacing:-.5px}
+.kpi span{font-size:12px;color:var(--tx3)}
+.note{background:var(--panel);border-left:3px solid var(--warn);border-radius:8px;
+  padding:14px 18px;margin:16px 0;color:var(--tx2);font-size:13.5px}
+.note.bad{border-left-color:var(--bad)}
+.note.ok{border-left-color:var(--ok)}
+.note.info{border-left-color:var(--info)}
+.foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);
+  color:var(--tx3);font-size:12.5px}
+.gate{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  margin:14px 0;overflow:hidden}
+.gate > .hd{background:var(--panel2);padding:10px 16px;border-bottom:1px solid var(--line);
+  display:flex;justify-content:space-between;align-items:baseline;gap:14px}
+.gate > .hd b{font-size:14.5px;color:var(--tx)}
+.gate > .hd .when{font-size:12px;color:var(--tx3);white-space:nowrap}
+.gate > .bd{padding:12px 16px;font-size:13.5px;color:var(--tx2)}
+.gate > .bd > :first-child{margin-top:0}
+.gate > .bd > :last-child{margin-bottom:0}
+.fail{color:var(--bad)}
+/* ml-css:s */
+/* ============================================================
+   motion-layer v1 · 静态交付文档的动效与性能层
+   约束：所有动画只动 opacity / transform，不触发布局与重绘
+   ============================================================ */
+
+:root{
+  --dur-fast:140ms;
+  --dur-base:240ms;
+  --dur-slow:360ms;
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --prog:#a371f7;
+  --hover-line:#3d4b5c;
+}
+
+/* ---------- 入场揭示 ----------
+   元素位移时长(360ms)略长于透明度(240ms)，形成轻微的分层感。
+   只用 2D translateY：位移仅 14px，用 translate3d 会为全文档每个块
+   强制建立 GPU 合成层，属无收益的显存开销。
+   只在 html.js 存在时隐藏，脚本失效则内容照常可见。 */
+html.js .wrap > *{opacity:0;transform:translateY(14px)}
+html.js .wrap > .in{
+  opacity:1;
+  transform:none;
+  transition:opacity var(--dur-base) var(--ease-out) var(--d,0ms),
+             transform var(--dur-slow) var(--ease-out) var(--d,0ms),
+             border-color var(--dur-fast) linear,
+             border-left-color var(--dur-fast) linear,
+             background-color var(--dur-fast) linear;
+}
+
+/* KPI 容器本身不做透明度动画，避免与子元素淡入叠加导致过暗 */
+html.js .wrap > .kpi{opacity:1;transform:none;transition:none}
+
+/* KPI 卡片逐张浮现 */
+html.js .kpi > div{opacity:0;transform:translateY(10px) scale(.985)}
+html.js .kpi.in > div{
+  opacity:1;
+  transform:none;
+  transition:opacity var(--dur-slow) var(--ease-out),
+             transform var(--dur-slow) var(--ease-out),
+             border-color var(--dur-fast) linear;
+}
+html.js .kpi.in > div:nth-child(1){transition-delay:0ms}
+html.js .kpi.in > div:nth-child(2){transition-delay:45ms}
+html.js .kpi.in > div:nth-child(3){transition-delay:90ms}
+html.js .kpi.in > div:nth-child(4){transition-delay:135ms}
+html.js .kpi.in > div:nth-child(5){transition-delay:180ms}
+html.js .kpi.in > div:nth-child(6){transition-delay:225ms}
+
+/* ---------- 交互反馈 ----------
+   仅在真鼠标设备启用，触屏不产生悬停残留。 */
+@media (hover:hover) and (pointer:fine){
+  .kpi > div,.note,.step,.gate,table tr{
+    transition:border-color var(--dur-fast) linear,
+               border-left-color var(--dur-fast) linear,
+               background-color var(--dur-fast) linear;
+  }
+  table tr:hover{background-color:rgba(255,255,255,.022)}
+  .kpi > div:hover{border-color:var(--hover-line)}
+  .step:hover,.gate:hover{border-color:var(--hover-line)}
+  .note:hover{border-left-color:#94a3b8}
+}
+
+/* ---------- 阅读进度 ----------
+   scaleX 走合成器，滚动时不产生布局与重绘。 */
+.prog{
+  position:fixed;top:0;left:0;right:0;height:2px;
+  background:var(--prog);
+  transform:scaleX(0);transform-origin:0 50%;
+  opacity:0;transition:opacity var(--dur-base) linear;
+  z-index:9999;pointer-events:none;will-change:transform;
+}
+.prog.on{opacity:.85}
+
+/* ---------- 键盘焦点 ---------- */
+:focus-visible{outline:2px solid var(--prog);outline-offset:2px;border-radius:4px}
+
+/* ---------- 减少动效 ---------- */
+@media (prefers-reduced-motion:reduce){
+  html.js .wrap > *,html.js .kpi > div{
+    opacity:1!important;transform:none!important;transition:none!important;
+  }
+  .prog{display:none}
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.01ms!important;
+    scroll-behavior:auto!important;
+  }
+}
+/* ml-css:e */
+</style>
+<!-- ml-head:s -->
+<script>
+/* 首帧即标记 js，杜绝「先显示再隐藏」的闪烁。
+   1.5s 内若主逻辑未就绪，自动移除标记让内容恢复可见——
+   正确性优先于动效，绝不因为脚本问题让文档白屏。 */
+document.documentElement.classList.add('js');
+setTimeout(function () {
+  if (!window.__mlReady) document.documentElement.classList.remove('js');
+}, 1500);
+</script>
+<!-- ml-head:e -->
+</head>
+<body>
+<div class="wrap">
+
+<h1>单人项目交付规范 v1.0</h1>
+<div class="sub">「工序-标准-清单-证据」的精简落地 · 4 个硬卡点 · 判定全程脚本化 · 2026-10-27</div>
+
+<div class="kpi">
+  <div><b class="ok">4</b><span>硬卡点（原 11 道工序）</span></div>
+  <div><b class="ok">13 / 13</b><span>判定器负向自测</span></div>
+  <div><b class="ok">2 / 2</b><span>单元全部通过</span></div>
+  <div><b>1111</b><span>交付代码与文档行数</span></div>
+</div>
+
+<div class="note info">
+<b>它解决的那一个问题</b>：单人项目没有第二个人签字，最大的风险不是做错，是自己给自己放行。
+所以这套东西把「人审计」整个换成「脚本判定」——四个卡点全由 <code>gate.py</code> 出结论，证据全部由命令产出，人不参与打分。
+</div>
+
+<h2>一、上一版为什么不成立</h2>
+
+<p>上一轮的 natdiag 交付清单是 11 道工序 × 四栏（工序｜标准｜清单｜判定｜证据），看得出用心，但有两处硬伤：</p>
+
+<table>
+<tr><th>问题</th><th>实证</th><th>后果</th></tr>
+<tr>
+  <td><b>开销不可持续</b></td>
+  <td>11 道工序逐条整理，耗时远超有效工时的 10%</td>
+  <td>单人不可能每轮都做，最终必然整体弃用——不是逐渐减少，是一次性废止</td>
+</tr>
+<tr>
+  <td><b>清单靠人整理</b></td>
+  <td>文档里 4 处代码行数由人工填写，<span class="bad">4 处全错</span>：<code>collector.cpp</code> 126→实 132、<code>serialize.cpp</code> 261→263、<code>test_collector.cpp</code> 189→197、<code>test_diagnosis.cpp</code> 148→147</td>
+  <td>最后靠 <code>wc -l</code> 才发现。人工记账的可靠性不取决于认真程度，取决于有没有校验回路</td>
+</tr>
+<tr>
+  <td><b>事后整理</b></td>
+  <td>表格是做完之后回头补的</td>
+  <td>补的表只能自证，堵不住任何东西。卡点必须前置</td>
+</tr>
+</table>
+
+<h2>二、五条设计依据</h2>
+
+<p>每条对应一种已实际发生的失效，不是原则口号。</p>
+
+<table>
+<tr><th>编号</th><th>依据</th><th>解决的失效</th></tr>
+<tr><td class="n">P1</td><td><b>可证伪</b><br>只有通过 / 不通过两态，禁用「基本可用」「已完成 80%」</td><td>程度描述无法被任何人（包括三个月后的自己）事后核对</td></tr>
+<tr><td class="n">P2</td><td><b>机器判定</b><br>卡点由脚本给结论，人不给自己签字</td><td>自证偏差。见上表 4 处行数全错</td></tr>
+<tr><td class="n">P3</td><td><b>证据生成</b><br>证据由命令产出，人不手写</td><td>手写证据与事实之间没有约束力</td></tr>
+<tr><td class="n">P4</td><td><b>分级适用</b><br>按影响面三档，每档只走必要卡点</td><td>流程疲劳。全套流程套在改一行文案上，结果是连代码改动也一起绕过</td></tr>
+<tr><td class="n">P5</td><td><b>偏离留痕</b><br>允许跳过，但必须登记原因与补做计划</td><td>理想化规范必然被放弃。100% 遵守率是假的，把偏离变成显式决策才可靠</td></tr>
+</table>
+
+<h2>三、四个卡点</h2>
+
+<div class="gate">
+  <div class="hd"><b>G1　验收标准已声明</b><span class="when">开工前 · 不过则不得开工</span></div>
+  <div class="bd">
+    spec 存在且含「目标 / 验收标准 / 不做范围」三节；每条 AC 形如 <code>- [AC-01] 描述 | 判: 方式</code>，缺判定方式即不通过；编号不得重复；残留「待填写 / TODO」即不通过。
+    <br><span class="dim">依据 P1：没有判定方式的标准不是标准，是意图。</span>
+  </div>
+</div>
+
+<div class="gate">
+  <div class="hd"><b>G2　构建通过</b><span class="when">交付前 · 不过则不得交付</span></div>
+  <div class="bd">
+    config 中声明的构建命令全部退出码 0，日志落盘 <code>evidence/&lt;unit&gt;/G2-build.log</code>。
+    <br><span class="dim">依据 P2：说「完成」之前必须真的跑过，不接受「部分成功」这种描述。</span>
+  </div>
+</div>
+
+<div class="gate">
+  <div class="hd"><b>G3　每条验收标准有证据</b><span class="when">交付前 · 不过则未覆盖项必须移入未验证</span></div>
+  <div class="bd">
+    每个 AC 编号在 <code>evidence/&lt;unit&gt;/</code> 下存在同名文件，且编码合规（拒绝带 BOM 或含 NUL 的文件）。
+    <br><span class="dim">依据 P3：证据由 <code>gate.py gen</code> 产出，不手工创建。</span>
+  </div>
+</div>
+
+<div class="gate">
+  <div class="hd"><b>G4　未验证项已声明</b><span class="when">交付前 · 不过则不得交付</span></div>
+  <div class="bd">
+    spec 含「未验证」节且内容非空（可写「无」）。
+    <br><span class="dim">依据 P1：在结构上阻止把假设说成事实。</span>
+  </div>
+</div>
+
+<h2>四、分级</h2>
+
+<table>
+<tr><th>档位</th><th>触发条件</th><th>必过卡点</th><th>典型开销</th></tr>
+<tr><td class="n">T0</td><td>只改文档、注释、文案</td><td class="n">G2</td><td>分钟级</td></tr>
+<tr><td class="n">T1</td><td>单文件内部逻辑，不改对外签名与数据布局</td><td class="n">G2 G3</td><td>十分钟级</td></tr>
+<tr><td class="n">T2</td><td>新增文件 / 改公开接口 / 改数据结构 / 跨文件重构</td><td class="n">G1 G2 G3 G4</td><td>小时级</td></tr>
+</table>
+
+<p><b>4.1</b> 只要新增了源文件，至少 T2。<b>4.2</b> 只要改了对外签名、公开头文件、数据成员布局、序列化格式，至少 T2。
+<b>4.3</b> 档位由人声明，脚本只校验该档要求的卡点是否全过——<span class="warn">脚本不推断档位</span>，因为本项目无版本控制，任何 diff 推断都不可靠，不可靠的自动化比没有自动化更危险。<b>4.4</b> 拿不准按高一档。</p>
+
+<h2>五、判定器实测</h2>
+
+<p>真实输出，不是示例。左侧是通过的正常单元，右侧是让它面对异常输入。</p>
+
+<pre><b>## all delivery-standard</b>（自举：用规范验收规范自身）
+== delivery-standard · T2 · 需过 G1 G2 G3 G4 ==
+
+<span class="ok">[PASS]</span> G1 验收标准已声明  —  4 条 AC，全部携带判定方式
+<span class="ok">[PASS]</span> G2 构建通过  —  1 条命令全部退出码 0
+<span class="ok">[PASS]</span> G3 每条 AC 有证据  —  4 条 AC 证据齐备且编码合规
+<span class="ok">[PASS]</span> G4 未验证项已声明  —  未验证项已声明
+
+结论：通过                                          exit=0</pre>
+
+<pre><b>## selftest</b>（13 项负向自测，证明判定器会说不）
+<span class="ok">[PASS]</span> 完整 spec 应通过        <span class="ok">[PASS]</span> spec 缺失应失败
+<span class="ok">[PASS]</span> 缺验收标准节应失败      <span class="ok">[PASS]</span> AC 缺判定方式应失败
+<span class="ok">[PASS]</span> AC 含待填写应失败       <span class="ok">[PASS]</span> AC 编号重复应失败
+<span class="ok">[PASS]</span> 缺不做范围节应失败      <span class="ok">[PASS]</span> 未验证节为空应失败
+<span class="ok">[PASS]</span> 未验证节缺失应失败      <span class="ok">[PASS]</span> 证据缺失应失败
+<span class="ok">[PASS]</span> 证据带 BOM 应失败       <span class="ok">[PASS]</span> 证据含 NUL 应失败
+<span class="ok">[PASS]</span> 证据合规应通过
+
+13/13 项通过                                          exit=0</pre>
+
+<pre><b>## 常驻负向对照单元</b>
+G1 @ __negative__  （无 spec）      → <span class="bad">[FAIL]</span> spec 不存在          exit=1
+G2 @ __failbuild__（构建恒失败）    → <span class="bad">[FAIL]</span> 命令退出码 3         exit=1</pre>
+
+<div class="note ok">
+这 13 项里 3 项是「应当通过」，10 项是「应当失败」。刻意混合：只有正向用例，判定器恒真也能全过；只有负向用例，判定器恒假也能全过。
+</div>
+
+<h2>六、spec 长什么样</h2>
+
+<pre><span class="dim"># natdiag</span>
+
+<span class="dim">## 目标</span>
+NAT 端口映射诊断模块：把引擎层 6 类 alert 归一成统一事件流。
+
+<span class="dim">## 验收标准</span>
+- [AC-01] 核心库单元测试全部通过 | 判: <span class="ok">natdiag/build/natdiag-tests.exe 退出码 0</span>
+
+<span class="dim">## 不做范围</span>
+- 不验收 working / refused 判定结论：本网络构造不出真实场景
+
+<span class="dim">## 未验证</span>
+- <b>working / refused 判定路径无真实环境验证</b>：仅由单测合成 alert 事件覆盖
+- <b>OpenSSL 缺失</b>：BT 协议加密不可用，是否影响 swarm 连通性未测</pre>
+
+<p><code>判:</code> 后面必须是可执行命令或可测量指标。写「功能正常」不算——这类表述无法核对，G1 也拦不住，只能靠写的人自己不放水。这是规范的盲区，见第九节。</p>
+
+<h2>七、与上一版的对应关系</h2>
+
+<table>
+<tr><th>处理</th><th>内容</th><th>理由</th></tr>
+<tr><td class="info">保留</td><td>标准 / 判定 / 证据 三栏</td><td>这三栏是 G1 与 G3 的内核，原设计是对的</td></tr>
+<tr><td class="warn">压缩</td><td>11 道工序 → 4 个卡点</td><td>11 道的实际开销远超 10%，不可持续（P4）</td></tr>
+<tr><td class="warn">改造</td><td>清单由人整理 → 脚本生成</td><td>人工清单已出现 4 处事实错误（P2）</td></tr>
+<tr><td class="ok">新增</td><td>分级、偏离记录、已知弱点</td><td>原版本缺裁剪机制与自限声明</td></tr>
+</table>
+
+<p>原 <code>natdiag-delivery-checklist.html</code> 作为历史交付物保留不动。</p>
+
+<h2>八、文件清单</h2>
+
+<table>
+<tr><th>路径</th><th class="n">行数</th><th>作用</th></tr>
+<tr><td><code>delivery-standard/standard.md</code></td><td class="n">228</td><td>规范正文，唯一权威来源</td></tr>
+<tr><td><code>delivery-standard/tools/gate.py</code></td><td class="n">604</td><td>卡点判定器，含 13 项内建自测</td></tr>
+<tr><td><code>delivery-standard/README.md</code></td><td class="n">127</td><td>快速上手与常见坑</td></tr>
+<tr><td><code>delivery-standard/config.toml</code></td><td class="n">60</td><td>单元、档位、构建与证据命令</td></tr>
+<tr><td><code>delivery-standard/templates/unit-spec.md</code></td><td class="n">25</td><td>spec 模板</td></tr>
+<tr><td><code>delivery-standard/templates/exceptions.md</code></td><td class="n">20</td><td>偏离记录模板</td></tr>
+<tr><td><code>specs/delivery-standard.md</code></td><td class="n">26</td><td>自举单元的验收标准</td></tr>
+<tr><td><code>specs/natdiag.md</code></td><td class="n">21</td><td>真实模块的验收标准</td></tr>
+</table>
+
+<p>行数取自 <code>wc -l</code>，不是估的。</p>
+
+<h2>九、已知弱点</h2>
+
+<div class="note bad">
+规范必须写清自己哪里不行，否则使用者会误判其保障范围。以下四条都无法用本规范自身消除。
+</div>
+
+<table>
+<tr><th>编号</th><th>弱点</th><th>为什么消不掉</th></tr>
+<tr><td class="n">9.1</td><td><b>档位自评无外部约束</b></td><td>声明 T0 就能少走卡点，没有第二个人核对声明是否合理。无技术解，只能靠偏离记录事后暴露行为模式</td></tr>
+<tr><td class="n">9.2</td><td><b>只覆盖构建与证据，不覆盖设计质量</b></td><td>一个模块可以 100% 通过四个卡点，同时架构是错的。卡点保证「说完成时确实能跑且有据」，不保证「做对了」</td></tr>
+<tr><td class="n">9.3</td><td><b>无版本控制支撑</b></td><td>当前项目未初始化 git，档位声明没有 diff 可交叉验证，偏离也无从自动发现</td></tr>
+<tr><td class="n">9.4</td><td><b>测试质量无法校验</b></td><td>G3 只查证据存在，不查断言是否有效。断言写 <code>assert(true)</code> 也能过</td></tr>
+</table>
+
+<h2>十、怎么用</h2>
+
+<pre>python delivery-standard/tools/gate.py doctor      <span class="dim"># 环境与已声明单元</span>
+python delivery-standard/tools/gate.py gen --unit myunit    <span class="dim"># 产出证据</span>
+python delivery-standard/tools/gate.py all --unit myunit    <span class="dim"># 按档位跑全部卡点</span></pre>
+
+<p>退出码 <code>0</code> 全过 / <code>1</code> 有卡点不通过 / <code>2</code> 用法或配置错误。完整说明见 <code>delivery-standard/README.md</code>。</p>
+
+<div class="foot">
+单人项目交付规范 v1.0 · 2026-10-27 · 正文 <code>delivery-standard/standard.md</code> · 本文件为渲染版，改动请改正文后重新生成
+</div>
+
+</div>
+<!-- ml-body:s -->
+<div class="prog" aria-hidden="true"></div>
+<script>
+(function () {
+  var root = document.documentElement;
+  root.classList.add('js');
+
+  if (!('IntersectionObserver' in window)) {
+    root.classList.remove('js');
+    window.__mlReady = true;
+    return;
+  }
+
+  var MAX_STEP = 6;
+  var STEP_MS = 45;
+
+  var targets = Array.prototype.slice.call(document.querySelectorAll('.wrap > *'));
+
+  var io = new IntersectionObserver(function (entries) {
+    var i = 0;
+    for (var n = 0; n < entries.length; n++) {
+      var e = entries[n];
+      if (!e.isIntersecting) continue;
+      var idx = i < MAX_STEP ? i : MAX_STEP;
+      e.target.style.setProperty('--d', idx * STEP_MS + 'ms');
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+      i++;
+    }
+  }, { rootMargin: '0px 0px -6% 0px', threshold: 0.01 });
+
+  for (var k = 0; k < targets.length; k++) io.observe(targets[k]);
+
+  window.__mlReady = true;
+
+  var prog = document.querySelector('.prog');
+  if (!prog) return;
+
+  var pending = false;
+
+  function paint() {
+    var max = root.scrollHeight - window.innerHeight;
+    var ratio = max > 0 ? window.scrollY / max : 0;
+    if (ratio < 0) ratio = 0;
+    else if (ratio > 1) ratio = 1;
+    prog.style.transform = 'scaleX(' + ratio + ')';
+    if (window.scrollY > 48) prog.classList.add('on');
+    else prog.classList.remove('on');
+    pending = false;
+  }
+
+  function tick() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(paint);
+  }
+
+  window.addEventListener('scroll', tick, { passive: true });
+  window.addEventListener('resize', tick, { passive: true });
+  paint();
+})();
+</script>
+<!-- ml-body:e -->
+</body>
+</html>

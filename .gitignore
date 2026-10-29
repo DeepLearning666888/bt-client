@@ -1,0 +1,32 @@
+# ---------------------------------------------------------------- 构建产物
+# 含 CMakeCache 里的绝对路径，换机即失效；体积以十 MB 计
+build/
+cmake-build-*/
+
+# ---------------------------------------------------- 虚拟环境与解释器缓存
+.venv*/
+__pycache__/
+*.pyc
+
+# ------------------------------------------------ 测量素材（体积大，可重建）
+# 7.0 GB 测试用 ISO。进库会让仓库永久膨胀，且二进制无法被 git 压缩
+m0-baseline/downloads/
+# aria2c.exe / 7z.msi / aria2.zip 等第三方二进制
+m0-baseline/vendor/
+# 单个 50 MB 的 aria2 调试日志
+m0-baseline/out/aria2.log
+# 探针下载的种子 payload，合计 2.2 GB
+engine-probe/probe-*/
+
+# ---------------------------------------------------------------- 临时产物
+docs-motion/.shots/
+docs-motion/.edge*/
+docs-motion/.chrome*/
+# natdiag 根目录下的调试残留；golden/ 子目录的基线不受影响
+natdiag/*.log
+# 工具链自检产物
+engine-probe/toolchain_check/*.exe
+
+# ------------------------------------------------------ 本地留底（不进库）
+# 无 SSL 版 libtorrent 构建产物备份，重编覆盖前的唯一退路
+artifacts/

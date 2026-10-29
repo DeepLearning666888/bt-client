@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>M0 技术验证基线报告</title>
+<style>
+:root{--bg:#0f1115;--card:#171a21;--line:#262b36;--tx:#e6e9ef;--dim:#9aa3b2;
+--ok:#3ddc84;--warn:#ffb020;--bad:#ff5c5c;--acc:#4c9aff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+font:15px/1.7 -apple-system,"Segoe UI","Noto Sans SC",sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:48px 24px 80px}
+h1{font-size:30px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--dim);font-size:14px;margin-bottom:36px}
+h2{font-size:20px;margin:44px 0 14px;padding-left:12px;border-left:3px solid var(--acc)}
+h3{font-size:16px;margin:26px 0 10px;color:var(--tx)}
+p{color:#c8cedb}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:14px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:500;font-size:13px}
+td:not(:first-child),th:not(:first-child){text-align:right}
+tr.hot td{background:rgba(255,92,92,.09)}
+tr.hot td:first-child{color:var(--bad);font-weight:600}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.kpi div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi b{display:block;font-size:24px;font-weight:600;letter-spacing:-.5px}
+.kpi span{color:var(--dim);font-size:12px}
+.big{color:var(--acc)}
+.bad{color:var(--bad)}.ok{color:var(--ok)}.warn{color:var(--warn)}
+pre{background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+overflow:auto;font:13px/1.6 ui-monospace,Consolas,monospace;color:#c9d3e2}
+ul{padding-left:20px;color:#c8cedb}li{margin:6px 0}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;
+border:1px solid var(--line);color:var(--dim);margin-right:6px}
+.verdict{border-left:3px solid var(--warn);background:rgba(255,176,32,.06);
+border-radius:0 10px 10px 0;padding:14px 18px;margin:18px 0}
+.verdict.bad{border-color:var(--bad);background:rgba(255,92,92,.07)}
+.verdict.ok{border-color:var(--ok);background:rgba(61,220,132,.06)}
+footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);
+color:var(--dim);font-size:13px}
+</style></head><body><div class="wrap">
+
+<h1>M0 技术验证基线报告</h1>
+<div class="sub">Windows 10/11 · NVMe SSD (YMTC 238GB) · 2026-10-26 实测 · 引擎 aria2 1.37.0 · 测试资源为 Ubuntu / Debian 官方发布种子</div>
+
+<h2>一、结论先行</h2>
+
+<div class="verdict bad">
+<strong>瓶颈确认在磁盘写入粒度，不在带宽。</strong>
+aria2 实测的单次写入只有 <b>16.0 KB</b>，而这块 NVMe 在 16KB 随机写时只有
+<b>7.0 MB/s / 445 IOPS</b>，顺序写却是 <b>215.8 MB/s</b>——
+两者相差 <b>31 倍</b>。BT 实测的 8.58 MB/s 平均速度正好落在这个随机写上限附近。
+</div>
+
+<div class="kpi">
+<div><span>平均下载速度</span><b class="big">8.58</b><span>MB/s</span></div>
+<div><span>峰值（单秒）</span><b>14.83</b><span>MB/s</span></div>
+<div><span>磁盘写入</span><b>8.56</b><span>MB/s</span></div>
+<div><span>单次写入</span><b class="bad">15.9</b><span>KB</span></div>
+<div><span>CPU（单核）</span><b>24</b><span>%</span></div>
+<div><span>内存</span><b>40</b><span>MB</span></div>
+</div>
+
+<h2>二、磁盘能力：问题的根</h2>
+
+<div class="card">
+<table>
+<tr><th>写入模式</th><th>吞吐 (MB/s)</th><th>IOPS</th></tr>
+<tr><td>seq-16KB</td><td>211.6</td><td>13545</td></tr><tr><td>seq-1MB</td><td>215.8</td><td>216</td></tr><tr><td>seq-64KB</td><td>215.4</td><td>3447</td></tr><tr class="hot"><td>rand-16KB-4GB</td><td>7.0</td><td>445</td></tr><tr><td>rand-256KB-4GB</td><td>24.5</td><td>98</td></tr>
+</table>
+</div>
+
+<p>三个数字放在一起看就清楚了：顺序写不管 16KB 还是 1MB 都是 <b>215 MB/s</b>（NTFS 写缓存把小块合并了），
+但一旦偏移是随机的，16KB 小块直接掉到 <b>7.0 MB/s</b>。而 256KB 随机写虽然 IOPS 更低（98），
+吞吐反而是 16KB 的 <b>3.5 倍</b>——因为每次写入的有效载荷更大。</p>
+
+<div class="verdict">
+<strong>对自研引擎的直接要求：</strong>落盘块大小必须对齐到 BT 分片大小（本例 256KB），
+绝不能沿用 16KB 的小块刷写。这一个决定，理论上能把磁盘侧上限从 ~7 MB/s 拉到 ~24.5 MB/s 以上。
+</div>
+
+<h2>三、主基线（Ubuntu 26.10 官方 ISO，6.3 GB，200 秒采样）</h2>
+
+<div class="card">
+<table>
+<tr><th>指标</th><th>实测值</th></tr>
+<tr><td>平均下载速度（稳态，剔除前 15s 爬坡）</td><td>8.58 MB/s</td></tr>
+<tr><td>峰值（单秒最高）</td><td>14.83 MB/s</td></tr>
+<tr><td>峰值（最优 5 秒均值）</td><td>14.76 MB/s</td></tr>
+<tr><td>磁盘写入平均 / 网络接收平均</td><td>8.56 / 8.58 MB/s（比值 1.00，无放大）</td></tr>
+<tr><td>写入 IOPS / 平均单次写入</td><td>550 / 15.9 KB</td></tr>
+<tr><td>CPU 占用（折合单核百分比）</td><td>23.8 %</td></tr>
+<tr><td>内存（工作集）</td><td>40 MB</td></tr>
+<tr><td>句柄数</td><td>315</td></tr>
+<tr><td>最大连接数 / 最大做种者数</td><td>162 / 91</td></tr>
+<tr><td>有种子文件时的首字节耗时</td><td>0.05 s</td></tr>
+</table>
+</div>
+
+<p>磁盘与网络比值 <b>1.00</b> 说明写入没有放大，一个字节进就一个字节落盘。
+但 16KB 的粒度让这 8.5 MB/s 变成了磁盘的极限值，而不是网络给不了更多。</p>
+
+<h2>四、调优对比：参数改不动写入粒度</h2>
+
+<div class="card">
+<table>
+<tr><th>配置</th><th>平均 (MB/s)</th><th>峰值5s (MB/s)</th><th>单次写入</th></tr>
+<tr><td>none_cache16</td><td>12.89</td><td>38.23</td><td>16.0 KB</td></tr><tr><td>prealloc_c16</td><td>7.43</td><td>9.49</td><td>15.9 KB</td></tr><tr><td>none_cache256</td><td>6.82</td><td>17.60</td><td>15.9 KB</td></tr><tr><td>prealloc_c256</td><td>8.35</td><td>13.17</td><td>15.9 KB</td></tr><tr><td>prealloc_c512</td><td>12.47</td><td>15.85</td><td>16.0 KB</td></tr>
+</table>
+</div>
+
+<div class="verdict bad">
+<strong>五种配置，写入粒度全部是 16.0 KB，一个字节没变。</strong>
+<code>--file-allocation=prealloc</code>（预分配）和 <code>--disk-cache=512M</code>（加大写缓存）
+都没有改变 aria2 的落盘块大小。这意味着：<b>这不是配置问题，是引擎实现问题。</b>
+</div>
+
+<p>同时要诚实指出：平均速度在 6.82 ~ 12.89 MB/s 之间跳动，峰值最高冲到 38 MB/s。
+这个波动幅度比我们想观察的磁盘效应还大，说明 <b>当前测试无法把「磁盘限制」和「seed 供给波动」干净地分开</b>。
+要下确定性结论，必须做受控实验——用本地种子节点把网络变量固定住（见第六节）。</p>
+
+<h2>五、磁力链路：用户看到的「一直 0 KB/s」有多长</h2>
+
+<div class="card">
+<table>
+<tr><th>阶段</th><th>耗时</th></tr>
+<tr><td>点击磁力 → 拿到元数据（BEP-9 完成）</td><td class="bad">18.33 s</td></tr>
+<tr><td>点击磁力 → 首个分片落盘</td><td class="bad">22.14 s</td></tr>
+<tr><td>对照：有 .torrent 文件时的首字节</td><td class="ok">0.05 s</td></tr>
+</table>
+</div>
+
+<p>差距是 <b>22.14 秒 vs 0.05 秒</b>，差了三个数量级。这 22 秒里用户界面上什么都没有，
+如果没有进度提示，绝大多数人会直接认为软件卡死并卸载。这段链路必须做成可见的分阶段提示：
+「正在查找 peer（已连 160 个）→ 正在交换元数据 → 元数据就绪，开始下载」。</p>
+
+<h2>六、端到端正确性</h2>
+
+<div class="card">
+<table>
+<tr><th>检查项</th><th>结果</th></tr>
+<tr><td>Debian 13.7 netinst 完整下载</td><td class="ok">完成，180.3 秒，平均 4.19 MB/s</td></tr>
+<tr><td>分片 SHA-1 全量重校验</td><td class="ok">Verification finished successfully</td></tr>
+<tr><td>对比 Debian 官方发布 SHA256</td><td class="ok">a7ef94ac2fb9a7fec454552abd629b7cc9d5155c886165a45649f5ce6167e355 — 一致</td></tr>
+</table>
+</div>
+
+<h2>七、M0 得出的工程结论</h2>
+
+<h3>已经确定的</h3>
+<ul>
+<li><b>磁盘写入粒度是首要优化目标。</b>256KB 随机写比 16KB 随机写快 3.5 倍，自研引擎必须按分片对齐落盘。</li>
+<li><b>预分配和写缓存不是关键参数。</b>至少在 aria2 上完全无效，别在这上面浪费时间调。</li>
+<li><b>CPU 和内存完全不是瓶颈。</b>24% 单核、40 MB 常驻，说明协议处理开销很小，性能全卡在 IO。</li>
+<li><b>磁力首包延迟 22 秒是体验红线。</b>必须做成可观测的分阶段状态，不能是一个转圈图标。</li>
+</ul>
+
+<h3>尚未确定的（M0 的真正缺口）</h3>
+<ul>
+<li><b>8.58 MB/s 里有多少是磁盘限制、多少是 seed 供给不足？</b>五组配置速度波动达 2 倍，无法归因。</li>
+<li><b>Defender 实时扫描的真实影响没测到。</b>本机 Defender 服务处于 Stopped（有第三方安全软件接管），
+所以这一项数据缺失，需要在有 Defender 的环境补测。我没有为了凑数据去关掉或改动系统安全组件。</li>
+<li><b>机械盘（东芝 DT01ACA100 932GB，非系统盘）上的表现没测。</b>16KB 随机写在机械盘上会更惨，
+这是低配用户的主要群体，必须补测。</li>
+</ul>
+
+<h3>下一步建议（受控实验，约 30 分钟）</h3>
+<pre>用本地种子节点消除网络变量：
+  1. 拿已下好的 Debian ISO 在本机做一个 seed（aria2 --seed-time=0 长期做种）
+  2. 下载端指向同一台机器的 loopback 地址，排除公网 peer 波动
+  3. 此时速度上限只剩 磁盘 + CPU + 协议栈
+  4. 在这个环境下重复 16KB / 256KB / 1MB 落盘粒度的对比
+→ 这才是能写进技术方案的数字，也是自研引擎磁盘调度的验收基线</pre>
+
+<h2>八、本次测试产物与副作用说明</h2>
+<div class="card">
+<table>
+<tr><th>项目</th><th>说明</th></tr>
+<tr><td>工作区新增</td><td><code>m0-baseline/</code>，合计 <b>42 GB</b></td></tr>
+<tr><td>其中下载缓存</td><td><code>out/partials/</code> 占 <b>37 GB</b>（调优对比留下的半成品，只改名未删除，可随时清理）</td></tr>
+<tr><td>系统改动</td><td>无安装、无注册表写入、无服务注册、无防火墙规则变更</td></tr>
+<tr><td>工作区外残留</td><td><code>%APPDATA%\qBittorrent\</code>（上一轮 qBittorrent 自动创建的空配置目录，可删）</td></tr>
+<tr><td>未做的事</td><td>没有关闭或修改任何安全软件；没有删除任何用户文件</td></tr>
+</table>
+</div>
+
+<footer>M0 baseline · 数据来源：out/res_*.json（逐秒原始采样已留档）· 报告由 t4/t7 脚本自动生成，数字直接取自原始 JSON，未经手工转录</footer>
+</div></body></html>

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>M0 · Windows 平台关键决策验证</title>
+<style>
+:root{
+  --bg:#0f1216; --panel:#161b22; --panel2:#1c232c; --line:#2a3441;
+  --tx:#e6edf3; --tx2:#9aa7b4; --tx3:#6b7887;
+  --ok:#3fb950; --warn:#d29922; --bad:#f85149; --info:#58a6ff; --acc:#a371f7;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:40px 24px 72px;background:var(--bg);color:var(--tx);
+  font:15px/1.72 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+.wrap{max-width:1020px;margin:0 auto}
+h1{font-size:27px;margin:0 0 6px;letter-spacing:-.4px}
+.sub{color:var(--tx2);font-size:14px;margin-bottom:34px}
+h2{font-size:19px;margin:44px 0 14px;padding-left:11px;border-left:3px solid var(--acc)}
+h3{font-size:15px;margin:26px 0 10px;color:var(--info);font-weight:600}
+p{margin:11px 0}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px;background:var(--panel);
+  border-radius:8px;overflow:hidden}
+th{background:var(--panel2);text-align:left;padding:10px 13px;font-weight:600;color:var(--tx2);
+  font-size:12.5px;letter-spacing:.03em;border-bottom:1px solid var(--line)}
+td{padding:9px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+code{background:var(--panel2);padding:1.5px 6px;border-radius:4px;font-size:12.5px;
+  font-family:"JetBrains Mono",Consolas,monospace;color:#79c0ff}
+.ok{color:var(--ok);font-weight:600}
+.bad{color:var(--bad);font-weight:600}
+.warn{color:var(--warn);font-weight:600}
+.info{color:var(--info)}
+.mono{font-family:"JetBrains Mono",Consolas,monospace;font-size:12.5px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:18px 20px;margin:18px 0}
+.card.k{border-left:3px solid var(--ok)}
+.card.w{border-left:3px solid var(--warn)}
+.card.d{border-left:3px solid var(--bad)}
+.card.i{border-left:3px solid var(--info)}
+.card h3{margin-top:0}
+ul,ol{margin:10px 0;padding-left:22px}
+li{margin:6px 0}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.kpi div{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px}
+.kpi b{display:block;font-size:24px;line-height:1.25;letter-spacing:-.5px}
+.kpi span{font-size:12px;color:var(--tx3)}
+.foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);
+  color:var(--tx3);font-size:12.5px}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;
+  background:var(--panel2);color:var(--tx2);margin-left:6px;vertical-align:middle}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>M0 · Windows 平台关键决策验证</h1>
+<div class="sub">入站可达性与预分配策略 · 全部为本机实测，非推断 · 2026-10-27</div>
+
+<div class="kpi">
+  <div><b class="bad">3 / 3</b><span>自动端口映射协议全部不可用</span></div>
+  <div><b class="ok">0.01 s</b><span>reserve 预占 4GB 耗时（免管理员）</span></div>
+  <div><b class="warn">18.26 s</b><span>零填充 4GB 耗时（60GB 约 4.5 分钟）</span></div>
+  <div><b class="ok">SUCCESS</b><span>显式提权后 SetFileValidData 可用</span></div>
+</div>
+
+<h2>一、自动端口映射：三种协议全灭</h2>
+
+<p>上一轮只测了 UPnP，不够。自动映射共有三套协议，全部实测：</p>
+
+<table>
+<tr><th>协议</th><th>探测端点</th><th>请求</th><th>结果</th></tr>
+<tr><td>UPnP IGD</td><td class="mono">239.255.255.250:1900</td><td>SSDP 组播 M-SEARCH</td><td class="bad">0 响应</td></tr>
+<tr><td>UPnP IGD</td><td class="mono">192.168.1.1:1900</td><td>SSDP <b>单播</b> M-SEARCH × 3 种 ST</td><td class="bad">全部 timeout</td></tr>
+<tr><td>UPnP IGD</td><td class="mono">192.168.1.1:{80,443,8080,49152}</td><td>9 条常见 IGD 控制路径</td><td class="bad">无命中</td></tr>
+<tr><td>NAT-PMP</td><td class="mono">192.168.1.1:5351</td><td>Opcode 0 · 请求外部地址</td><td class="bad">timeout</td></tr>
+<tr><td>NAT-PMP</td><td class="mono">192.168.1.1:5351</td><td>Opcode 1 · 映射 UDP 6881</td><td class="bad">timeout</td></tr>
+<tr><td>NAT-PMP</td><td class="mono">192.168.1.1:5351</td><td>Opcode 2 · 映射 TCP 6881</td><td class="bad">timeout</td></tr>
+<tr><td>PCP (RFC 6887)</td><td class="mono">192.168.1.1:5351</td><td>MAP · UDP 6881</td><td class="bad">timeout</td></tr>
+</table>
+
+<div class="card d">
+<h3>为什么这份结论可信</h3>
+<p>组播可能被拦，所以补做了<b>单播 M-SEARCH 直连网关</b>，三种 ST 全超时——排除组播干扰。NAT-PMP 与 PCP 共用 5351 端口，两条协议独立探测、各自超时——排除单协议实现问题。</p>
+<p>网关 80 端口有 Web 管理界面，证明设备在线。所以结论是：<b>路由器在线，但三个映射服务全部关闭</b>，不是网络不通。</p>
+</div>
+
+<p>叠加上一轮的实测：12 个境外节点（8 国）回连两个端口，<b>12/12 全部 <code>Connection timed out</code></b>；持 3.1 GB 已验证分片、159 个活跃连接时，<b>上传 90 个采样全部为 0</b>。</p>
+
+<div class="card i">
+<h3>对产品的直接要求</h3>
+<p>这张网络下「自动入站」这条路彻底不通。但好消息是 NAT 本身是<b>锥形 + 端口保持</b>（5 个 STUN 服务器返回同一映射端口 <code>50062</code>，且等于本地源端口），意味着<b>一旦手动映射成功，被动接入完全可用</b>。</p>
+<p>所以产品必须做两件事，且都不在 libtorrent 的能力范围内：</p>
+<ul>
+<li><b>入站诊断面板</b>：明确告诉用户「未获得公网端口」，而不是让用户看到慢却不知道为什么。要显示：NAT 类型、检测到的公网 IP、三种映射协议的探测结果、回连测试结论。</li>
+<li><b>手动映射引导</b>：给出「路由器型号 → 需要转发的端口 → 具体菜单路径」的可操作步骤。这是当前唯一可行的恢复上传能力的路径。</li>
+</ul>
+</div>
+
+<h2>二、预分配策略：四个方案实测</h2>
+
+<p>Windows 上有四种方式给下载文件预占空间。这三个指标决定用户体验，且<b>不受缓存干扰</b>：</p>
+
+<table>
+<tr><th>策略</th><th>实现方式</th><th>创建耗时</th><th>立即占用磁盘</th><th>需管理员</th></tr>
+<tr><td><b>sparse</b></td><td class="mono">FSCTL_SET_SPARSE + SetEndOfFile</td><td class="ok">0.00 s</td><td class="ok">0 GB</td><td class="ok">否</td></tr>
+<tr><td><b>reserve</b></td><td class="mono">SetFileInformationByHandle(FileAllocationInfo)</td><td class="ok">0.01 s</td><td>4.00 GB</td><td class="ok">否</td></tr>
+<tr><td><b>zerofill</b></td><td>全量写入 0 字节</td><td class="bad">18.26 s</td><td>4.01 GB</td><td class="ok">否</td></tr>
+<tr><td><b>valid</b></td><td class="mono">SetFileValidData</td><td class="ok">0.00 s</td><td>4.00 GB</td><td class="bad">是 + 显式提权</td></tr>
+</table>
+
+<p class="info">测试条件：4 GB 名义文件，C 盘 NVMe（YMTC 238GB）。</p>
+
+<div class="card w">
+<h3>零填充的代价被严重低估</h3>
+<p>18.26 秒写满 4 GB ≈ <b>224 MB/s</b>，这个速度已经是这块盘顺序写的上限。按同样速度线性外推：</p>
+<table style="margin:12px 0 0">
+<tr><th>文件大小</th><th>零填充耗时</th><th>用户看到什么</th></tr>
+<tr><td>4 GB（游戏安装包）</td><td>18 秒</td><td>转圈 18 秒</td></tr>
+<tr><td>20 GB（高清电影）</td><td>约 1.5 分钟</td><td>进度 0%，无速度</td></tr>
+<tr><td>60 GB（蓝光原盘合集）</td><td class="bad">约 4.5 分钟</td><td class="bad">进度 0%，无速度，大概率被当成卡死</td></tr>
+</table>
+<p style="margin-top:14px">绝大多数 BT 客户端默认就是零填充。这解释了为什么用户会觉得「点了下载没反应」。</p>
+</div>
+
+<h3>吞吐对比数据不可用，原因写清楚</h3>
+
+<p>同一文件两阶段随机写（各 256 MB / 16KB 块）的结果看起来极为反常：</p>
+
+<table>
+<tr><th>策略</th><th>阶段 1</th><th>阶段 2</th><th>变化</th><th>判断</th></tr>
+<tr><td>sparse</td><td>37.95 MB/s</td><td>33.18 MB/s</td><td>0.87×</td><td class="warn">受缓存影响，偏低</td></tr>
+<tr><td>reserve</td><td>14.26 MB/s</td><td class="bad">129.01 MB/s</td><td class="bad">9.05×</td><td class="bad">不可信</td></tr>
+<tr><td>zerofill</td><td>123.91 MB/s</td><td>128.33 MB/s</td><td>1.04×</td><td class="bad">不可信</td></tr>
+<tr><td>valid</td><td>14.15 MB/s</td><td>124.95 MB/s</td><td class="bad">8.83×</td><td class="bad">不可信</td></tr>
+</table>
+
+<p><b>这套数字不能用。</b>同一块盘、同样块大小，129 MB/s 已接近顺序写上限，随机 16KB 不可能达到。原因是页缓存：4 GB 文件在本机 68 GB 内存里被完全缓存，第二阶段覆盖写全部命中内存，根本没有落盘。</p>
+
+<p>要拿到可信数字必须加 <code>FILE_FLAG_NO_BUFFERING</code> 做扇区对齐 IO。但这<b>对产品决策没有影响</b>——上一轮受控实验已经证明预分配不改变吞吐（aria2 五组配置包括 prealloc 全在 6.8~12.9 MB/s 波动，8 peer 乱序也能跑 119 MB/s）。</p>
+
+<h2>三、SetFileValidData 权限链：完整闭合</h2>
+
+<p>之前在 M0 计划里我写过「要么引导管理员安装授权，要么接受速度大幅下降」。这个判断错了，实测把链路走完：</p>
+
+<table>
+<tr><th>步骤</th><th>调用</th><th>结果</th></tr>
+<tr><td>1</td><td class="mono">IsUserAnAdmin()</td><td class="ok">True（有管理员令牌）</td></tr>
+<tr><td>2</td><td class="mono">PrivilegeCheck(SeManageVolumePrivilege)</td><td class="bad">False ← 特权在 token 里但未启用</td></tr>
+<tr><td>3</td><td class="mono">SetFileValidData(h, size)</td><td class="bad">失败，err 1314 = ERROR_PRIVILEGE_NOT_HELD</td></tr>
+<tr><td>4</td><td class="mono">AdjustTokenPrivileges(SE_PRIVILEGE_ENABLED)</td><td class="ok">True（直接启用成功）</td></tr>
+<tr><td>5</td><td class="mono">PrivilegeCheck(SeManageVolumePrivilege)</td><td class="ok">True</td></tr>
+<tr><td>6</td><td class="mono">SetFileValidData(h, size)</td><td class="ok">SUCCESS</td></tr>
+</table>
+
+<div class="card k">
+<h3>结论：这个 API 完全不需要</h3>
+<p><code>reserve</code>（FileAllocationInfo）用 <b>0.01 秒</b>就真正占住了 4 GB 磁盘空间，<b>不需要管理员，不需要任何特权</b>，效果与 SetFileValidData 等价——都是「空间立刻被占住且不写零」。</p>
+<p>SetFileValidData 唯一的额外能力是跳过 NTFS 的零填充标记，而 reserve 本来就不填充。所以：</p>
+<ul>
+<li><b>放弃 SetFileValidData。</b>它带来一个严重安全问题：调用后文件区域内是<b>磁盘上残留的旧数据</b>（可能包含其他人或其他进程的敏感内容）。只要引擎有任何路径读取了未写入区域，就是信息泄露漏洞。MSDN 对此有明确警告。</li>
+<li><b>放弃「安装时申请管理员」这个产品难题。</b>它是伪命题——不需要管理员也能做到最好的预分配效果。</li>
+</ul>
+<p>这意味着最初担心的「UAC 会拦掉一批企业用户」这个问题，<b>根本不存在</b>。</p>
+</div>
+
+<h2>四、对产品的最终决策</h2>
+
+<table>
+<tr><th>决策点</th><th>结论</th><th>依据</th></tr>
+<tr><td>默认预分配策略</td><td class="ok"><b>sparse（不预分配）</b></td><td>0 秒创建、不预占磁盘；吞吐无差异（上轮受控实验）；SSD 碎片无影响，HDD 实测 102 MB/s</td></tr>
+<tr><td>「预占空间」开关</td><td class="ok"><b>reserve</b>，默认关闭</td><td>0.01 秒占满 4GB，免管理员。用户想「锁定磁盘空间防止下到一半没地方」时开</td></tr>
+<tr><td>SetFileValidData</td><td class="bad"><b>不实现</b></td><td>无额外收益 + 信息泄露风险 + 需显式提权</td></tr>
+<tr><td>零填充</td><td class="bad"><b>不用</b></td><td>60GB 文件要 4.5 分钟空白期，是最差的首字节体验</td></tr>
+<tr><td>管理员权限</td><td class="ok"><b>不需要</b></td><td>所有最优策略都不依赖特权</td></tr>
+<tr><td>入站诊断</td><td class="warn"><b>必做</b></td><td>三种映射协议全灭，无入站时上传恒为 0，必须让用户看见原因</td></tr>
+<tr><td>手动端口转发引导</td><td class="warn"><b>必做</b></td><td>锥形 NAT + 端口保持，手动映射后可完全恢复被动接入</td></tr>
+</table>
+
+<h2>五、原始数据</h2>
+
+<ul class="mono">
+<li>out/res_natpmp_pcp.json — NAT-PMP/PCP 探测原始回复</li>
+<li>out/res_alloc2.json — 四策略两阶段预分配数据</li>
+<li>out/res_nat.json · res_inbound.json · res_upload_nat.json — 上一轮 NAT/回连/上传（本轮引用）</li>
+<li>aria/t18_natpmp.py · t19_alloc.py · t20_validpriv.py — 全部测试脚本，可重跑</li>
+</ul>
+
+<div class="foot">
+本报告全部数字来自本机实测。吞吐对比数据已明确标注为不可用（页缓存污染），未参与任何结论。
+预分配创建耗时、磁盘占用、特权链三组数据不受缓存影响，可信。
+</div>
+
+</div>
+</body>
+</html>

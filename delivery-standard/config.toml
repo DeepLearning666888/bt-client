@@ -1,0 +1,118 @@
+# 单人项目交付规范 —— 卡点配置
+# 对应 standard.md v1.0。路径相对项目根，命令用正斜杠，shell=False 执行，
+# 因此不要在这里写 > 或 2>&1（输出重定向由 gate.py 接管）。
+
+[paths]
+spec_dir = "specs"
+evidence_dir = "evidence"
+
+
+# ------------------------------------------------------------------ 自举单元
+# 用规范验收规范自身。AC-03 是负向验证：证明判定器确实会说不。
+
+[units.delivery-standard]
+tier = "T2"
+build = ["python -m py_compile delivery-standard/tools/gate.py"]
+
+[[units.delivery-standard.evidence]]
+ac = "AC-01"
+cmd = "python -m py_compile delivery-standard/tools/gate.py"
+
+[[units.delivery-standard.evidence]]
+ac = "AC-02"
+cmd = "python delivery-standard/tools/gate.py doctor"
+
+[[units.delivery-standard.evidence]]
+ac = "AC-03"
+cmd = "python delivery-standard/tools/gate.py g1 --unit __negative__"
+expect = 1
+
+[[units.delivery-standard.evidence]]
+ac = "AC-04"
+cmd = "python delivery-standard/tools/gate.py selftest"
+
+
+# ------------------------------------------------------------------ 真实模块
+# cmake / ninja 不在 PATH，路径取自 natdiag/build/CMakeCache.txt 的 CMAKE_COMMAND。
+
+[units.natdiag]
+tier = "T2"
+build = ["C:/vcpkg-tools/cmake/cmake-4.4.4-windows-x86_64/bin/cmake.exe --build natdiag/build"]
+
+[[units.natdiag.evidence]]
+ac = "AC-01"
+cmd = "natdiag/build/natdiag-tests.exe"
+
+
+# ------------------------------------------------------------------ M1b 引擎
+# 证据命令全部是「自起自停」的 Python 脚本：脚本内部拉起引擎、断言、收尾，
+# 外部只需看退出码。这样 AC 才能保持「一条命令可判定」的形态。
+# 注意：本单元尚未实现，G3 会因缺证据而失败——这是预期状态，不是配置错误。
+
+[units.engine-service]
+tier = "T2"
+build = ["C:/vcpkg-tools/cmake/cmake-4.4.4-windows-x86_64/bin/cmake.exe --build engine/build"]
+
+[[units.engine-service.evidence]]
+ac = "AC-01"
+cmd = "C:/vcpkg-tools/cmake/cmake-4.4.4-windows-x86_64/bin/cmake.exe --build engine/build"
+
+[[units.engine-service.evidence]]
+ac = "AC-02"
+cmd = "python engine/tests/t_single_instance.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-03"
+cmd = "python engine/tests/t_auth.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-04"
+cmd = "python engine/tests/t_health.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-05"
+cmd = "python engine/tests/t_add_magnet.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-06"
+cmd = "python engine/tests/t_pause_resume.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-07"
+cmd = "python engine/tests/t_delete.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-08"
+cmd = "python engine/tests/t_restart.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-09"
+cmd = "python engine/tests/t_latency.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-10"
+cmd = "python engine/tests/t_bind_loopback.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-11"
+cmd = "python engine/tests/t_malformed.py"
+
+[[units.engine-service.evidence]]
+ac = "AC-12"
+cmd = "python engine/tests/t_nat_field.py"
+
+
+# ------------------------------------------------------------- 负向对照单元
+# 故意不提供 specs/__negative__.md。AC-03 依赖它稳定失败，
+# 以此证明 G1 不会对缺失输入误判为通过。
+
+[units.__negative__]
+tier = "T1"
+build = ["python -c pass"]
+
+# 构建必然失败的负向单元：用于验证 G2 不会把失败的命令判成通过。
+# 注意：命令按 shell 规则分词（shell=False），含空格的参数必须加引号，
+# 否则会被拆成多个参数——这条本身踩过一次坑。
+[units.__failbuild__]
+tier = "T1"
+build = ['python -c "import sys;sys.exit(3)"']
