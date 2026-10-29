@@ -45,17 +45,18 @@ cmd = "natdiag/build/natdiag-tests.exe"
 
 
 # ------------------------------------------------------------------ M1b 引擎
+# 构建走 toolchain/build.py：它自带 MSVC 环境（vcvars 因 reg.exe 黑名单不可用），
+# 因此在任何 shell 里都能跑，不要求调用方先 source 什么。
 # 证据命令全部是「自起自停」的 Python 脚本：脚本内部拉起引擎、断言、收尾，
 # 外部只需看退出码。这样 AC 才能保持「一条命令可判定」的形态。
-# 注意：本单元尚未实现，G3 会因缺证据而失败——这是预期状态，不是配置错误。
 
 [units.engine-service]
 tier = "T2"
-build = ["C:/vcpkg-tools/cmake/cmake-4.4.4-windows-x86_64/bin/cmake.exe --build engine/build"]
+build = ["python toolchain/build.py engine"]
 
 [[units.engine-service.evidence]]
 ac = "AC-01"
-cmd = "C:/vcpkg-tools/cmake/cmake-4.4.4-windows-x86_64/bin/cmake.exe --build engine/build"
+cmd = "python toolchain/build.py engine"
 
 [[units.engine-service.evidence]]
 ac = "AC-02"

@@ -58,10 +58,18 @@ LibtorrentRasterbar_DIR  = C:/libtorrent/install/lib/cmake/LibtorrentRasterbar
 
 CMake 4.x 配置部分依赖时需要 `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`，否则因旧 policy 被拒。
 
+**不要手敲 cmake 命令**，统一走 `toolchain/build.py`（它自带上面这套 MSVC 环境，
+因此在任何 shell 里都能跑，不要求先 source 任何脚本）：
+
 ```bash
-C:/vcpkg-tools/cmake/cmake-4.4.4-windows-x86_64/bin/cmake.exe --build natdiag/build
-C:/vcpkg-tools/cmake/cmake-4.4.4-windows-x86_64/bin/cmake.exe --build engine-probe/build
+python toolchain/build.py engine          # 需要时自动 configure
+python toolchain/build.py engine --configure
+python toolchain/build.py natdiag
+python toolchain/build.py engine-probe
 ```
+
+手敲 cmake 的后果是踩到 `CMAKE_MT-NOTFOUND` / `rc.exe 找不到`——本机 `vcvars64.bat`
+因 `reg.exe` 黑名单产不出完整环境，这个坑已经踩过两次。
 
 ## 缺失的能力
 

@@ -10,15 +10,23 @@
 
 **独立进程，不是 Tauri 内嵌。** libtorrent 遇到畸形种子可能直接 abort，隔离后界面不会跟着挂；重启界面不掉任务；引擎可无头测试，`curl` 输出即可作为验收证据，正好套进 gate.py 的证据模型。
 
-**HTTP 层手写，不引第三方库。** 只用 Boost.Asio 阻塞式 socket（Boost 1.86 头文件已在 `C:\boost`）。原因是 vcpkg 被 `reg.exe` 黑名单堵死，装不了新依赖；而本接口只需支持 `GET/POST/DELETE` + `Content-Length` + `Connection: close`，是一个真·小子集，手写可控且无需信任外部代码。代价是不支持分块传输、keep-alive、TLS —— 全部明确拒绝而非部分支持。
+**HTTP 层手写，不引第三方库。** 直接用 Windows 原生 socket（`ws2_32`），连 Boost.Asio 也不用。原因是 vcpkg 被 `reg.exe` 黑名单堵死，装不了新依赖；而本接口只需支持 `GET/POST/DELETE` + `Content-Length` + `Connection: close`，是一个真·小子集，手写可控且无需信任外部代码。代价是不支持分块传输、keep-alive、TLS —— 全部明确拒绝而非部分支持。
 
 **鉴权一律强制，`/health` 也不例外。** 本机任何进程都能访问回环端口，不设例外可以避免「留一个免鉴权端点」变成后续默认习惯。
 
 **状态在定时器里算，请求时不算。** 10 Hz 定时器生成不可变快照（`shared_ptr<const Snapshot>`），HTTP 处理器只读指针。这样 `/state` 的延迟与任务数量无关，50 个任务和 1 个任务的响应时间一样。
 
-**M1b 不引入 SQLite。** 持久化用 libtorrent 原生 `fastresume` + 一个 `index.json`。理由：会话状态的唯一权威格式就是 libtorrent 自己的 resume data，自己再存一份必然不同步；而 M1b 的要点是引擎本身，不该同时引第二个新依赖。SQLite 在 M2 承接设置与历史记录。
+**M1b 不引入 SQLite，也不引入索引文件。** 持久化只有一个来源：libtorrent 原生 `fastresume`。会话状态的唯一权威格式就是它；自己再存一份 index 必然与它不同步。无元数据的磁力存不出 resume，退化为一个 `.magnet` 兜底文件。SQLite 在 M2 承接设置与历史记录。
 
 **端口与令牌写入发现文件。** 引擎监听 `127.0.0.1:0`（内核分配），启动后把 `{host, port, token, pid, version}` 写入 `data/engine.endpoint.json`。避免固定端口冲突，同时让前端无需启动参数即可发现引擎。
+
+## 实现期偏离（与批准版本的差异）
+
+三处，都是实现时才暴露的，已就地改到上面：
+
+1. **HTTP 层从 Boost.Asio 改为原生 Winsock。** 既然只用阻塞式收发，Asio 带来的只有链接配置的不确定性（Boost 1.86 的 header-only 模式下 `boost_system` 是否需要链接、`_WIN32_WINNT` 由谁定义）。原生 socket 只依赖 `ws2_32.lib`，行为完全可预测。代价是 M2 之后要跨平台得重写这一层，已记入未验证。
+2. **去掉 index.json，改 resume 单源。** 原设计是「resume + index 双写」，实现时发现两道真理必然漂移：index 说 paused、resume 说没 paused 时以谁为准没有答案。改成只认 resume，条目发现改为扫描 `data/resume/` 目录。无元数据的磁力存不出 resume，另存 `.magnet` 兜底。
+3. **新增 `POST /shutdown`。** 原 spec 没有退出接口，测试只能杀进程；而杀进程不会触发落盘，AC-08 就只能靠时序赌运气。加这个端点后优雅退出有了确定性入口，代价是多一个需要鉴权的破坏性操作。
 
 ## 验收标准
 
@@ -50,4 +58,6 @@
 - **resume data 的免校验恢复未逐字节验证。** AC-08 只断言重启后状态到达 seeding，未断言「校验过程被完全跳过」——后者需要对比磁盘读量，当前没有测量手段。
 - **崩溃隔离只做了进程级设计，未注入真实崩溃。** 没有主动触发 libtorrent abort 来验证引擎死亡后界面侧的表现，因为 M1b 尚无界面。
 - **10 Hz 快照在高任务数下的 CPU 占用未测。** AC-09 只测响应延迟，不测定时器本身的开销。
-- **跨平台未验证。** 仅 Windows + MSVC 19.44。
+- **跨平台未验证。** 仅 Windows + MSVC 19.44。HTTP 层直接依赖 Winsock，换平台要重写。
+- **并发上限未压测。** 服务端是 4 个 worker 线程 + 64 条排队上限，这两个数按「单客户端 10Hz 轮询」估的，没有做过并发连接压测。超过上限的请求会被直接断开，行为正确但容量未知。
+- **`/shutdown` 只有一个 Bearer 令牌作为边界。** 本机任意进程只要读到发现文件就能停引擎；这是「回环可用即受信」的假设，没有做进程身份校验。
