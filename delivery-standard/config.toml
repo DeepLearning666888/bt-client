@@ -143,6 +143,58 @@ cmd = "python toolchain/build.py desktop --build"
 ac = "AC-08"
 cmd = "python desktop/tests/t_engine_discovery.py"
 
+# ------------------------------------------------- 跨机测试包（P1 渲染与帧率）
+# 这是「界面不卡」从断言变成数据的那个单元。M2a 的四条性能约束全在 jsdom 里判定，
+# 而 jsdom 没有排版引擎与合成器 —— 它能证明「DOM 结构对」，不能证明「60fps」。
+#
+# build 两条缺一不可：先构建探针并内联成单文件，再装进测试包。
+# AC-08 要求包内页面与构建产物字节一致，所以打包必须在验收之前跑完，
+# 否则拿到的是上次遗留的旧页面。
+
+[units.crossmachine]
+tier = "T2"
+build = [
+    "python toolchain/build.py desktop --perf",
+    "python toolchain/build.py crossmachine",
+]
+
+# AC-01..AC-05 全在纯函数层，一条 vitest 命令覆盖五条断言
+#（与 desktop 单元的 AC-03/04/05 同一做法：判定入口是一个退出码）
+[[units.crossmachine.evidence]]
+ac = "AC-01"
+cmd = "python toolchain/build.py desktop --test perf"
+
+[[units.crossmachine.evidence]]
+ac = "AC-02"
+cmd = "python toolchain/build.py desktop --test perf"
+
+[[units.crossmachine.evidence]]
+ac = "AC-03"
+cmd = "python toolchain/build.py desktop --test perf"
+
+[[units.crossmachine.evidence]]
+ac = "AC-04"
+cmd = "python toolchain/build.py desktop --test perf"
+
+[[units.crossmachine.evidence]]
+ac = "AC-05"
+cmd = "python toolchain/build.py desktop --test perf"
+
+# 内联脚本自带自包含校验，外链残留时退出码 3
+[[units.crossmachine.evidence]]
+ac = "AC-06"
+cmd = "python toolchain/build.py desktop --perf"
+
+# 真实浏览器：起本地服务 + headless Chrome，两条路径（http / file）各跑一次完整流程。
+# 这一项证明「探针能跑」，不证明「性能达标」—— 帧率数值不参与判定。
+[[units.crossmachine.evidence]]
+ac = "AC-07"
+cmd = "python desktop/tests/t_perf_headless.py"
+
+[[units.crossmachine.evidence]]
+ac = "AC-08"
+cmd = "python desktop/tests/t_crossmachine_pack.py"
+
 # ------------------------------------------------------------- 负向对照单元
 # 故意不提供 specs/__negative__.md。AC-03 依赖它稳定失败，
 # 以此证明 G1 不会对缺失输入误判为通过。

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BT 桌面端 — 渲染与帧率探针</title>
+    <style>
+      /* 探针页自己的样式内联在这里：不参与被打分的 styles.css，
+         避免「测试工具自身污染被测对象」。只动颜色与间距，不引入动画。 */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0b0d11;
+        color: #e6e9ef;
+        font: 13px/1.6 system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      }
+      .perf {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 20px 16px 40px;
+      }
+      .perf h1 {
+        font-size: 17px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      .perf-sub {
+        color: #8b93a7;
+        margin: 0 0 16px;
+      }
+      .perf-stage {
+        border: 1px solid #242936;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #171a21;
+      }
+      .perf-bar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin: 14px 0;
+        flex-wrap: wrap;
+      }
+      button {
+        background: #1d2330;
+        color: #e6e9ef;
+        border: 1px solid #2e3648;
+        border-radius: 6px;
+        padding: 7px 14px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        background: #242c3c;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .perf-status {
+        color: #8b93a7;
+      }
+      .perf-status[data-level='pass'] {
+        color: #4caf7d;
+      }
+      .perf-status[data-level='warn'] {
+        color: #d8a34a;
+      }
+      .perf-status[data-level='fail'] {
+        color: #d9534f;
+      }
+      .perf-status[data-level='env-limited'] {
+        color: #5b8cff;
+      }
+      #perf-log {
+        margin: 0;
+        padding: 12px;
+        background: #12151c;
+        border: 1px solid #242936;
+        border-radius: 8px;
+        color: #a8b0c2;
+        font: 12px/1.7 ui-monospace, Consolas, 'Cascadia Mono', monospace;
+        white-space: pre-wrap;
+        max-height: 320px;
+        overflow: auto;
+      }
+      #perf-report {
+        display: none;
+      }
+      .perf-note {
+        color: #6d7486;
+        font-size: 12px;
+        margin: 12px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="perf">
+      <h1>渲染与帧率探针</h1>
+      <p class="perf-sub">
+        用真实浏览器渲染真实任务列表组件，跑三个场景。全程约 10 秒，不需要联网。
+      </p>
+
+      <div class="perf-stage"><div id="perf-stage-mount"></div></div>
+
+      <div class="perf-bar">
+        <button id="perf-run">开始测量</button>
+        <button id="perf-save" disabled>保存结果 JSON</button>
+        <span class="perf-status" id="perf-status">待开始</span>
+      </div>
+
+      <pre id="perf-log"></pre>
+      <p class="perf-remark perf-note" id="perf-env"></p>
+      <pre id="perf-report"></pre>
+    </div>
+    <script type="module" src="/src/perf.tsx"></script>
+  </body>
+</html>

@@ -15,6 +15,9 @@
     python toolchain/build.py desktop --check    # tsc --noEmit
     python toolchain/build.py desktop --test model  # 跑单个测试文件（子串匹配）
     python toolchain/build.py desktop --build    # 生产构建
+    python toolchain/build.py desktop --perf     # 帧率探针：构建 + 内联成单文件
+
+    python toolchain/build.py crossmachine       # 组装跨机测试包（依赖 --perf 产物）
 
 为什么前端也要包装：gate.py 用 shell=False 跑配置里的命令（不存在 `cd x && y` 这种写法），
 而且 node 不在系统 PATH 里。这里负责定位 node.exe 与 npm-cli.js，绕开 npm.cmd 对 cmd.exe
@@ -144,6 +147,20 @@ def desktop_target(rest: list[str]) -> int:
             return 3
         return npm("run", "build")
 
+    if "--perf" in rest:
+        # 探针页单独构建：多入口会被 rollup 拆成共享 chunk，内联成单文件时
+        # 跨 chunk 的 import 无法解析。见 desktop/vite.perf.config.ts 的注释。
+        if not has_modules:
+            print("node_modules 不存在，先跑 --install")
+            return 3
+        rc = npm("run", "build:perf")
+        if rc != 0:
+            return rc
+        # 内联用当前解释器执行，不依赖 python 在 PATH 里
+        inline = ROOT / "desktop" / "tools" / "inline_perf.py"
+        print("[inline]", inline.relative_to(ROOT).as_posix())
+        return subprocess.run([sys.executable, str(inline)], cwd=str(ROOT)).returncode
+
     if "--test" in rest:
         idx = rest.index("--test")
         if idx + 1 >= len(rest):
@@ -169,6 +186,11 @@ def main(argv: list[str]) -> int:
 
     if argv[1] == "desktop":
         return desktop_target(argv[2:])
+
+    if argv[1] == "crossmachine":
+        pack = ROOT / "desktop" / "tools" / "pack_crossmachine.py"
+        print("[pack]", pack.relative_to(ROOT).as_posix())
+        return subprocess.run([sys.executable, str(pack)], cwd=str(ROOT)).returncode
 
     target = argv[1]
     force_configure = "--configure" in argv[2:]
