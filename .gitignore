@@ -36,6 +36,12 @@ desktop/dist-perf/
 desktop/.vite/
 desktop/*.log
 
+# ------------------------------------------------- Tauri 壳（desktop/src-tauri）
+# target 含上百 MB 编译产物与绝对路径，换机即失效
+desktop/src-tauri/target/
+# gen/ 是 tauri-build 生成的 schema，每次构建自动重建
+desktop/src-tauri/gen/
+
 # ------------------------------------------------------- 跨机测试包（cross）
 # RUN.md 与 collect-env.ps1 是手写的，入库；
 # perf.html 是构建产物（与 desktop/dist 里那份字节一致），入库会让每次构建都产生 diff。

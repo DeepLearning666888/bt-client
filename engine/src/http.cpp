@@ -39,6 +39,7 @@ char const* reason_phrase(int status) {
         case 415: return "Unsupported Media Type";
         case 431: return "Request Header Fields Too Large";
         case 503: return "Service Unavailable";
+        case 204: return "No Content";
         default:  return "Internal Server Error";
     }
 }
@@ -104,17 +105,32 @@ void graceful_close(SOCKET s) {
 
 void write_response(SOCKET s, Response const& resp) {
     std::string out;
-    out.reserve(resp.body.size() + 128);
+    out.reserve(resp.body.size() + 320);
     out += "HTTP/1.1 ";
     out += std::to_string(resp.status);
     out += ' ';
     out += reason_phrase(resp.status);
-    out += "\r\nContent-Type: ";
-    out += resp.content_type;
-    out += "\r\nContent-Length: ";
-    out += std::to_string(resp.body.size());
+    if (resp.status != 204) {
+        out += "\r\nContent-Type: ";
+        out += resp.content_type;
+        out += "\r\nContent-Length: ";
+        out += std::to_string(resp.body.size());
+    }
+    // ---- 跨源许可
+    // 桌面壳的前端跑在 http://tauri.localhost，引擎在 http://127.0.0.1:<port>，
+    // 两者不同源。没有这几个头，浏览器会在拿到响应之前就把请求判为失败 ——
+    // 现场表现是「窗口打开了，但界面永远转圈」，而引擎日志里一片安静（预检都没过）。
+    // 浏览器开发形态（vite 在 localhost:5173）同样需要。
+    //
+    // 允许任意 Origin 是刻意的：认证靠 Bearer 令牌，不靠同源策略。令牌只有
+    // 本机文件系统和壳知道，网页拿不到。防 DNS rebinding 的是 Host 检查（见下），
+    // 不是 Origin 白名单。
+    out += "\r\nAccess-Control-Allow-Origin: *";
+    out += "\r\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS";
+    out += "\r\nAccess-Control-Allow-Headers: Authorization, Content-Type";
+    out += "\r\nAccess-Control-Max-Age: 600";
     out += "\r\nConnection: close\r\n\r\n";
-    out += resp.body;
+    if (resp.status != 204) out += resp.body;
     send_all(s, out);
 }
 
@@ -205,6 +221,18 @@ void serve_connection(SOCKET s, Server::Handler const& handler, std::string cons
             req.path = target.substr(0, q);
             req.query = target.substr(q + 1);
         }
+    }
+
+    // ---- CORS 预检
+    // 带 Authorization 头、或用 application/octet-stream 提交种子的请求，
+    // 浏览器会在真正请求之前先发一次 OPTIONS。预检按规范不带凭证，所以它必须
+    // 在认证检查之前放行 —— 否则会被 401 拦下，浏览器看到预检失败就放弃真正的请求。
+    if (req.method == "OPTIONS") {
+        Response preflight;
+        preflight.status = 204;
+        write_response(s, preflight);
+        graceful_close(s);
+        return;
     }
 
     if (req.method != "GET" && req.method != "POST" && req.method != "DELETE") {

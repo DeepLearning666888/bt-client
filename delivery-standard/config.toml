@@ -69,7 +69,6 @@ cmd = "python engine/tests/t_auth.py"
 [[units.engine-service.evidence]]
 ac = "AC-04"
 cmd = "python engine/tests/t_health.py"
-
 [[units.engine-service.evidence]]
 ac = "AC-05"
 cmd = "python engine/tests/t_add_magnet.py"
@@ -101,6 +100,12 @@ cmd = "python engine/tests/t_malformed.py"
 [[units.engine-service.evidence]]
 ac = "AC-12"
 cmd = "python engine/tests/t_nat_field.py"
+
+# M2b 追加：浏览器跨源。缺 CORS 头时引擎侧没有任何日志（预检都没到），
+# 现场只表现为「界面永远转圈」，所以必须有断言锁住。
+[[units.engine-service.evidence]]
+ac = "AC-13"
+cmd = "python engine/tests/t_cors.py"
 
 
 # ------------------------------------------------------------- M2 桌面端
@@ -150,6 +155,42 @@ cmd = "python desktop/tests/t_engine_discovery.py"
 # build 两条缺一不可：先构建探针并内联成单文件，再装进测试包。
 # AC-08 要求包内页面与构建产物字节一致，所以打包必须在验收之前跑完，
 # 否则拿到的是上次遗留的旧页面。
+
+# ------------------------------------------------------------- M2b Tauri 壳
+# 顺序不能反：tauri-build 在编译期读 frontendDist，dist 不存在会直接失败。
+[units.tauri-shell]
+tier = "T2"
+build = [
+    "python toolchain/build.py desktop --build",
+    "python toolchain/build.py shell build --release",
+]
+
+# 纯决策逻辑：三情形 + 端点文件降级。不需要引擎，秒级完成。
+[[units.tauri-shell.evidence]]
+ac = "AC-01"
+cmd = "python toolchain/build.py shell test --release --lib"
+
+# 真引擎：spawn → reuse → shutdown → respawn 全走一遍
+[[units.tauri-shell.evidence]]
+ac = "AC-02"
+cmd = "python toolchain/build.py shell test --release --test live_engine"
+
+[[units.tauri-shell.evidence]]
+ac = "AC-03"
+cmd = "python toolchain/build.py desktop --test config"
+
+# 端到端：启动真壳，等前端回报首帧，再验优雅退出
+[[units.tauri-shell.evidence]]
+ac = "AC-04"
+cmd = "python desktop/tests/t_shell_e2e.py"
+
+[[units.tauri-shell.evidence]]
+ac = "AC-05"
+cmd = "python desktop/tests/t_shell_single.py"
+
+[[units.tauri-shell.evidence]]
+ac = "AC-06"
+cmd = "python desktop/tests/t_shell_artifact.py"
 
 [units.crossmachine]
 tier = "T2"

@@ -1,0 +1,29 @@
+[package]
+name = "btclient-shell"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "BT 客户端桌面壳：发现/拉起引擎并把端点递给前端"
+publish = false
+
+[lib]
+name = "btclient_shell"
+path = "src/lib.rs"
+
+[[bin]]
+name = "btclient-shell"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+# 默认 features 保留：compression（前端资源压缩）、common-controls-v6（Windows 原生控件）、
+# dynamic-acl（运行期权限）。三者都是 Tauri 2 在 Windows 上的正常形态。
+tauri = { version = "2.12", features = [] }
+# 只用来读写 engine.endpoint.json。tauri 已经间接依赖 serde，这里不引入额外体积。
+serde_json = "1"
+
+[profile.release]
+# 不为了体积调 opt-level：M2b 的目标是「能跑起来」，构建时间更值钱。
+# 真要压体积应在发布形态确定后统一做，而不是现在顺手开 LTO。

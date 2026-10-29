@@ -19,6 +19,9 @@
 
     python toolchain/build.py crossmachine       # 组装跨机测试包（依赖 --perf 产物）
 
+    python toolchain/build.py shell build --release   # 编译 Tauri 壳
+    python toolchain/build.py shell test              # 壳的单元测试
+
 为什么前端也要包装：gate.py 用 shell=False 跑配置里的命令（不存在 `cd x && y` 这种写法），
 而且 node 不在系统 PATH 里。这里负责定位 node.exe 与 npm-cli.js，绕开 npm.cmd 对 cmd.exe
 的隐含依赖。
@@ -85,6 +88,53 @@ def build_env() -> dict[str, str]:
 
 
 NODE_VERSIONS = Path.home() / ".workbuddy" / "binaries" / "node" / "versions"
+
+
+def find_cargo() -> Path:
+    """定位 cargo 可执行文件。
+
+    和 node 同样的理由：gate.py 用 shell=False，命令里不能指望 PATH 查找，
+    也不接受 `cd x && cargo y` 这种写法。找到绝对路径再执行。
+    """
+    candidates = []
+    if os.environ.get("CARGO_BIN"):
+        candidates.append(Path(os.environ["CARGO_BIN"]))
+    which = shutil.which("cargo")
+    if which:
+        candidates.append(Path(which))
+    candidates.append(Path.home() / ".cargo" / "bin" / "cargo.exe")
+    for path in candidates:
+        if path.exists() and path.is_file():
+            return path
+    raise SystemExit("找不到 cargo，请安装 Rust 工具链或设置 CARGO_BIN")
+
+
+def shell_target(rest: list[str]) -> int:
+    """跑 cargo，附带手工拼装的 MSVC 环境。
+
+    Rust 自己不需要 vcvars，但它的**链接阶段**要 link.exe 和 LIB 里的
+    kernel32.lib 等导入库。本机 reg.exe 被拦截导致 vcvars 产出残缺，
+    所以复用 build_env() 那套已知路径拼装 —— 与 C++ 侧同一个来源，
+    两边不会因为环境不一致而出现「C++ 能编、Rust 链接失败」这种分裂。
+    """
+    cargo = find_cargo()
+    manifest = ROOT / "desktop" / "src-tauri" / "Cargo.toml"
+    if not manifest.exists():
+        print(f"找不到 {manifest}")
+        return 2
+
+    env = build_env()
+    # 关掉颜色码：证据日志里混 ANSI 转义会让 grep 统计结果为 0（踩过一次）
+    env["CARGO_TERM_COLOR"] = "never"
+    env["NO_COLOR"] = "1"
+
+    # --manifest-path 是子命令选项，不是 cargo 全局选项：必须放在 build/test 之后，
+    # 否则 cargo 直接报 "unexpected argument"
+    cmd = [str(cargo), rest[0], "--manifest-path", str(manifest), *rest[1:]]
+    print("[cargo]", " ".join(rest))
+    # 逐行转发：首次编译十几分钟，没有输出会让人以为卡死
+    return subprocess.run(cmd, cwd=str(ROOT), env=env).returncode
+
 
 
 def find_node() -> tuple[Path, Path]:
@@ -191,6 +241,13 @@ def main(argv: list[str]) -> int:
         pack = ROOT / "desktop" / "tools" / "pack_crossmachine.py"
         print("[pack]", pack.relative_to(ROOT).as_posix())
         return subprocess.run([sys.executable, str(pack)], cwd=str(ROOT)).returncode
+
+    if argv[1] == "shell":
+        if len(argv) < 3:
+            print("用法：python toolchain/build.py shell <cargo 子命令...>")
+            print("例如：python toolchain/build.py shell build --release")
+            return 2
+        return shell_target(argv[2:])
 
     target = argv[1]
     force_configure = "--configure" in argv[2:]

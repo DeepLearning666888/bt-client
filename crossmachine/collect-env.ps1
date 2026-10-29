@@ -53,10 +53,28 @@ function Get-WebView2Version {
     foreach ($key in $keys) {
         if (Test-Path -LiteralPath $key) {
             $props = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
-            if ($null -ne $props -and $null -ne $props.pv) { return $props.pv }
+            if ($null -ne $props -and $null -ne $props.pv) {
+                return [pscustomobject]@{ version = "$($props.pv)"; source = 'registry' }
+            }
         }
     }
-    return $null
+    # Fallback: the registry entry can be missing or unreadable even when the
+    # runtime is present. Look for the files instead.
+    # Reporting null from a single probe used to be read as "not installed",
+    # which is a stronger claim than "could not detect". Keep them separate.
+    $roots = @(
+        "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application",
+        "$env:ProgramFiles\Microsoft\EdgeWebView\Application"
+    )
+    foreach ($root in $roots) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        $exe = Get-ChildItem -LiteralPath $root -Filter 'msedgewebview2.exe' -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object { $_.Directory.Name } -Descending | Select-Object -First 1
+        if ($null -ne $exe) {
+            return [pscustomobject]@{ version = "$($exe.Directory.Name)"; source = 'files' }
+        }
+    }
+    return [pscustomobject]@{ version = $null; source = 'not-detected' }
 }
 
 $os = Get-CimInstance Win32_OperatingSystem
@@ -96,6 +114,8 @@ $disks = @(
         }
     } @()
 )
+
+$wv = Get-WebView2Version
 
 $result = [ordered]@{
     schema       = 'env-v1'
@@ -142,7 +162,10 @@ $result = [ordered]@{
             'C:\Program Files\Microsoft\Edge\Application\msedge.exe'
         )
     }
-    webview2Version = Get-WebView2Version
+    webview2Version = $wv.version
+    # 'registry' | 'files' | 'not-detected'. null version with source
+    # 'not-detected' means the probe failed, NOT that the runtime is absent.
+    webview2Source  = $wv.source
     disks           = $disks
     powershell      = $PSVersionTable.PSVersion.ToString()
 }

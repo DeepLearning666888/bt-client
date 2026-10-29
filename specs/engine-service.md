@@ -27,6 +27,13 @@
 1. **HTTP 层从 Boost.Asio 改为原生 Winsock。** 既然只用阻塞式收发，Asio 带来的只有链接配置的不确定性（Boost 1.86 的 header-only 模式下 `boost_system` 是否需要链接、`_WIN32_WINNT` 由谁定义）。原生 socket 只依赖 `ws2_32.lib`，行为完全可预测。代价是 M2 之后要跨平台得重写这一层，已记入未验证。
 2. **去掉 index.json，改 resume 单源。** 原设计是「resume + index 双写」，实现时发现两道真理必然漂移：index 说 paused、resume 说没 paused 时以谁为准没有答案。改成只认 resume，条目发现改为扫描 `data/resume/` 目录。无元数据的磁力存不出 resume，另存 `.magnet` 兜底。
 3. **新增 `POST /shutdown`。** 原 spec 没有退出接口，测试只能杀进程；而杀进程不会触发落盘，AC-08 就只能靠时序赌运气。加这个端点后优雅退出有了确定性入口，代价是多一个需要鉴权的破坏性操作。
+4. **M2b 追加 CORS 支持（AC-13）。** 原设计假定「前端与引擎同源」，实际不是：壳的前端在
+   `http://tauri.localhost`，vite 在 `http://localhost:5173`，引擎在 `http://127.0.0.1:<port>`。
+   缺 CORS 头时浏览器在拿到响应前就丢弃，**引擎侧连一行日志都不会有**，现场表现是「窗口
+   打开了但界面永远转圈」。桌面端全部单测跑在 jsdom 里，而 jsdom 不做同源检查 —— 这个缺陷
+   直到装壳第一次真跑才暴露。允许任意 Origin 是刻意的：认证靠 Bearer 令牌，同源策略在这里
+   不承担安全职责；防 DNS rebinding 靠 Host 检查。预检必须在认证之前放行，因为它按规范
+   不带凭证，被 401 拦下同样等于放弃请求。
 
 ## 验收标准
 
@@ -42,6 +49,7 @@
 - [AC-10] 引擎只监听回环，局域网地址连接被拒 | 判: `python engine/tests/t_bind_loopback.py` 退出码 0
 - [AC-11] 畸形请求返回 4xx 且引擎不崩溃 | 判: `python engine/tests/t_malformed.py` 退出码 0，覆盖超长头/错误 Content-Length/分块传输/超大 body 四类，之后 /health 仍 200
 - [AC-12] /state 内含 nat 字段且结构符合 natdiag 快照契约 | 判: `python engine/tests/t_nat_field.py` 退出码 0
+- [AC-13] 跨源请求可被浏览器放行：OPTIONS 预检返回 204 且带全套 CORS 头，正常与错误响应同样带跨源许可，方法白名单不放宽 | 判: `python engine/tests/t_cors.py` 退出码 0，12 项检查全通过
 
 ## 不做范围
 
