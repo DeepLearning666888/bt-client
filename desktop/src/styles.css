@@ -1,0 +1,178 @@
+/* 动效约束（沿用 docs-motion 的结论）：
+   只动 transform 与 opacity；不碰 width/top/left，不上 backdrop-filter，
+   不加 box-shadow 动画。BT 客户端是「高频数值刷新 + 长列表」，
+   任何逐帧重排或实时模糊都会直接掉帧。 */
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --line: #242936;
+  --text: #e6e9ef;
+  --muted: #8b93a7;
+  --accent: #5b8cff;
+  --warn: #d8a34a;
+  --danger: #d9534f;
+  --ease: cubic-bezier(0, 0, 0.2, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  /* 避免字体加载导致的首屏闪烁 */
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 16px;
+  gap: 12px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.head h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.head-stats {
+  display: flex;
+  gap: 16px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.banner {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.banner-offline {
+  border-left-color: var(--danger);
+}
+
+.banner-warn {
+  border-left-color: var(--warn);
+}
+
+.banner-connecting {
+  border-left-color: var(--accent);
+}
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 滚动时跳过屏外行的布局计算，长列表直接受益 */
+  content-visibility: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.list-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.list-spacer {
+  position: relative;
+  width: 100%;
+}
+
+.list-window {
+  /* 只动 transform：走合成层，不触发重排 */
+  will-change: transform;
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  transition: background-color 150ms var(--ease);
+}
+
+.row:hover {
+  background: #1d212a;
+}
+
+.row-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+
+.row-name {
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-meta,
+.row-rate {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-side {
+  display: flex;
+  gap: 14px;
+}
+
+.bar-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: transparent;
+}
+
+.bar-fill {
+  height: 100%;
+  background: var(--accent);
+  /* scaleX 而非 width：width 每帧重排 */
+  transform-origin: left center;
+  transition: transform 200ms var(--ease);
+}
+
+.foot {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row,
+  .bar-fill {
+    transition: none !important;
+  }
+}

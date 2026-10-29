@@ -10,11 +10,21 @@
     python toolchain/build.py engine --configure # 强制重新 configure
     python toolchain/build.py natdiag
     python toolchain/build.py engine-probe
+
+    python toolchain/build.py desktop --install  # npm ci（无锁文件时退为 npm install）
+    python toolchain/build.py desktop --check    # tsc --noEmit
+    python toolchain/build.py desktop --test model  # 跑单个测试文件（子串匹配）
+    python toolchain/build.py desktop --build    # 生产构建
+
+为什么前端也要包装：gate.py 用 shell=False 跑配置里的命令（不存在 `cd x && y` 这种写法），
+而且 node 不在系统 PATH 里。这里负责定位 node.exe 与 npm-cli.js，绕开 npm.cmd 对 cmd.exe
+的隐含依赖。
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -71,10 +81,94 @@ def build_env() -> dict[str, str]:
     return env
 
 
+NODE_VERSIONS = Path.home() / ".workbuddy" / "binaries" / "node" / "versions"
+
+
+def find_node() -> tuple[Path, Path]:
+    """定位 node.exe 与 npm-cli.js。
+
+    不用 npm.cmd：它是批处理垫片，需要 cmd.exe 解释，而 gate.py 用 shell=False 执行命令。
+    直接调 npm-cli.js 只依赖 node.exe，行为确定。
+    """
+    candidates: list[Path] = []
+    if os.environ.get("NODE_BIN"):
+        candidates.append(Path(os.environ["NODE_BIN"]))
+    if NODE_VERSIONS.exists():
+        found = [p for p in NODE_VERSIONS.iterdir() if (p / "node.exe").exists()]
+        candidates.extend(sorted(found, reverse=True))
+    which = shutil.which("node")
+    if which:
+        candidates.append(Path(which).resolve().parent)
+
+    for d in candidates:
+        exe = d / "node.exe"
+        cli = d / "node_modules" / "npm" / "bin" / "npm-cli.js"
+        if exe.exists() and cli.exists():
+            return exe, cli
+    raise SystemExit("找不到 node.exe + npm-cli.js，请设置 NODE_BIN 指向 node 安装目录")
+
+
+def desktop_target(rest: list[str]) -> int:
+    app = ROOT / "desktop"
+    if not (app / "package.json").exists():
+        print(f"找不到 {app}/package.json，桌面端尚未脚手架")
+        return 2
+
+    node, cli = find_node()
+    env = dict(os.environ)
+    env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
+    # 证据日志要能 diff、能人工核对；ANSI 颜色码会写进去变成噪声
+    env["NO_COLOR"] = "1"
+    env["FORCE_COLOR"] = "0"
+
+    def npm(*args: str) -> int:
+        cmd = [str(node), str(cli), *args]
+        print("[npm]", " ".join(args))
+        return subprocess.run(cmd, cwd=str(app), env=env).returncode
+
+    has_modules = (app / "node_modules").exists()
+
+    if "--install" in rest:
+        # 有锁文件时必须用 ci：install 会改写锁文件，那就不再是「可复现安装」
+        return npm("ci") if (app / "package-lock.json").exists() else npm("install")
+
+    if "--check" in rest:
+        if not has_modules:
+            print("node_modules 不存在，先跑 --install")
+            return 3
+        return npm("run", "typecheck")
+
+    if "--build" in rest:
+        if not has_modules:
+            print("node_modules 不存在，先跑 --install")
+            return 3
+        return npm("run", "build")
+
+    if "--test" in rest:
+        idx = rest.index("--test")
+        if idx + 1 >= len(rest):
+            print("--test 需要一个测试名（文件子串，例如 model）")
+            return 2
+        name = rest[idx + 1]
+        vitest = app / "node_modules" / "vitest" / "vitest.mjs"
+        if not vitest.exists():
+            print("vitest 未安装，先跑 --install")
+            return 3
+        cmd = [str(node), str(vitest), "run", name]
+        print("[vitest]", name)
+        return subprocess.run(cmd, cwd=str(app), env=env).returncode
+
+    print(__doc__)
+    return 2
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__)
         return 2
+
+    if argv[1] == "desktop":
+        return desktop_target(argv[2:])
 
     target = argv[1]
     force_configure = "--configure" in argv[2:]

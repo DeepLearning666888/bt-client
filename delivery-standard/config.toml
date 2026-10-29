@@ -103,6 +103,46 @@ ac = "AC-12"
 cmd = "python engine/tests/t_nat_field.py"
 
 
+# ------------------------------------------------------------- M2 桌面端
+# 前端命令全部走 toolchain/build.py desktop：gate.py 用 shell=False 执行，
+# 写不了 `cd desktop && npm x`；且 node 不在系统 PATH 里，包装器负责定位。
+
+[units.desktop]
+tier = "T2"
+build = ["python toolchain/build.py desktop --build"]
+
+[[units.desktop.evidence]]
+ac = "AC-01"
+cmd = "python toolchain/build.py desktop --install"
+
+[[units.desktop.evidence]]
+ac = "AC-02"
+cmd = "python toolchain/build.py desktop --check"
+
+[[units.desktop.evidence]]
+ac = "AC-03"
+cmd = "python toolchain/build.py desktop --test model"
+
+[[units.desktop.evidence]]
+ac = "AC-04"
+cmd = "python toolchain/build.py desktop --test poller"
+
+[[units.desktop.evidence]]
+ac = "AC-05"
+cmd = "python toolchain/build.py desktop --test virtual"
+
+[[units.desktop.evidence]]
+ac = "AC-06"
+cmd = "python desktop/tests/t_live_engine.py"
+
+[[units.desktop.evidence]]
+ac = "AC-07"
+cmd = "python toolchain/build.py desktop --build"
+
+[[units.desktop.evidence]]
+ac = "AC-08"
+cmd = "python desktop/tests/t_engine_discovery.py"
+
 # ------------------------------------------------------------- 负向对照单元
 # 故意不提供 specs/__negative__.md。AC-03 依赖它稳定失败，
 # 以此证明 G1 不会对缺失输入误判为通过。

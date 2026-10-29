@@ -27,6 +27,14 @@ natdiag/*.log
 # 工具链自检产物
 engine-probe/toolchain_check/*.exe
 
+# --------------------------------------------------------- 前端（desktop）
+# package-lock.json 必须进库：AC-01 要求「从锁文件复现安装」，
+# 排除它就等于让 npm ci 无从谈起
+desktop/node_modules/
+desktop/dist/
+desktop/.vite/
+desktop/*.log
+
 # ------------------------------------------------------ 本地留底（不进库）
 # 无 SSL 版 libtorrent 构建产物备份，重编覆盖前的唯一退路
 artifacts/
