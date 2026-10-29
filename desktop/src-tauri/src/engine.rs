@@ -85,8 +85,15 @@ pub struct Resolved {
 ///
 /// 损坏的文件与不存在的文件在决策上等价（都要重新拉起），区分它们只会让调用方
 /// 多写一个永远走不到的分支。真正需要区分的信息由日志承担。
+///
+/// 不要求整个文件是合法 UTF-8：端口、令牌、pid 全是 ASCII，就算某个字段的编码坏了，
+/// 这里照样能拼出可用的端点。曾经用 `read_to_string` 硬要求 UTF-8，换来的是
+/// 「引擎明明起来了、端点文件明明写出来了，壳却等 20 秒然后报超时」——
+/// 旧版引擎把 ANSI 字节原样写进 JSON，中文路径下必然触发。
+/// 编码正确性该由引擎负责，壳这边多一层容错是为了不让一个字段拖垮整个应用。
 pub fn read_endpoint(data_dir: &Path) -> Option<Endpoint> {
-    let raw = std::fs::read_to_string(data_dir.join(ENDPOINT_NAME)).ok()?;
+    let bytes = std::fs::read(data_dir.join(ENDPOINT_NAME)).ok()?;
+    let raw = String::from_utf8_lossy(&bytes);
     let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let port = value.get("port")?.as_u64()?;
     let token = value.get("token")?.as_str()?;
@@ -212,9 +219,36 @@ pub fn spawn(engine_exe: &Path, data_dir: &Path) -> Result<Resolved, String> {
     let _ = child.kill();
     let tail = read_tail(&stderr_path, 800);
     Err(format!(
-        "等待引擎就绪超时（{}s）\n{tail}",
-        SPAWN_TIMEOUT.as_secs()
+        "等待引擎就绪超时（{}s）；{}\n{tail}",
+        SPAWN_TIMEOUT.as_secs(),
+        diagnose_endpoint(data_dir)
     ))
+}
+
+/// 超时时说明端点文件的真实状态。
+///
+/// 「超时」这一个词覆盖了三种完全不同的原因：文件没生成（引擎起不来）、
+/// 文件生成了但解析不出（编码或字段问题）、解析出来了但连不上（端口没监听）。
+/// 三种原因的排查方向完全不同，只报「超时」等于把定位工作推给下一个人。
+fn diagnose_endpoint(data_dir: &Path) -> String {
+    let path = data_dir.join(ENDPOINT_NAME);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(_) => return "端点文件未生成（引擎可能启动即退出）".to_string(),
+    };
+
+    let mut note = format!("端点文件已生成 {} 字节", bytes.len());
+    if std::str::from_utf8(&bytes).is_err() {
+        note.push_str("，但不是合法 UTF-8（引擎版本过旧，把 ANSI 路径原样写进了 JSON）");
+    }
+    match read_endpoint(data_dir) {
+        None => note.push_str("，解析不出 port/token"),
+        Some(endpoint) => note.push_str(&format!(
+            "，端点 port={} 可解析但健康检查未通过",
+            endpoint.port
+        )),
+    }
+    note
 }
 
 fn read_tail(path: &Path, max: usize) -> String {

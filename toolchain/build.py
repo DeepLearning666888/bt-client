@@ -136,6 +136,47 @@ def shell_target(rest: list[str]) -> int:
     return subprocess.run(cmd, cwd=str(ROOT), env=env).returncode
 
 
+def bundle_target(rest: list[str]) -> int:
+    """打 NSIS 安装包。
+
+    走 `tauri build` 而不是手拼 NSIS 脚本：WebView2 引导、快捷方式、卸载注册表项
+    这几件事的模板由 Tauri 维护，手写一遍只会引入自己的 bug。
+
+    两个必要前提，缺一不可：
+    - **cargo 必须在 PATH 里**。tauri CLI 内部用 `cargo build` 而非绝对路径，
+      本机 cargo 不在 PATH（同 node 的情况），所以显式补进去。
+    - **MSVC 环境**。链接阶段要 link.exe，理由同 shell_target()。
+
+    前端产物不在这里构建 —— `config.toml` 的 build 列表里 `desktop --build` 已排在前面。
+    这也意味着单独跑本函数时 dist/ 必须已存在，否则 tauri 会用上一次的陈旧产物，
+    那种「改了代码但装出来的还是旧界面」最难查。
+    """
+    app = ROOT / "desktop"
+    dist = app / "dist" / "index.html"
+    if not dist.exists():
+        print(f"找不到 {dist}，先跑：python toolchain/build.py desktop --build")
+        return 3
+
+    cli = app / "node_modules" / "@tauri-apps" / "cli" / "tauri.js"
+    if not cli.exists():
+        print(f"找不到 {cli}，先跑：python toolchain/build.py desktop --install")
+        return 3
+
+    node, _ = find_node()
+    cargo = find_cargo()
+
+    env = build_env()
+    env["CARGO_TERM_COLOR"] = "never"
+    env["NO_COLOR"] = "1"
+    # tauri CLI 靠 `cargo` 这个名字去 PATH 找，不能给它绝对路径（它不接受）
+    env["PATH"] = str(cargo.parent) + os.pathsep + env.get("PATH", "")
+
+    cmd = [str(node), str(cli), "build", "--no-bundle" if "--no-bundle" in rest else ""]
+    cmd = [part for part in cmd if part]
+    print("[tauri]", " ".join(cmd[2:]))
+    return subprocess.run(cmd, cwd=str(app), env=env).returncode
+
+
 
 def find_node() -> tuple[Path, Path]:
     """定位 node.exe 与 npm-cli.js。
@@ -246,7 +287,10 @@ def main(argv: list[str]) -> int:
         if len(argv) < 3:
             print("用法：python toolchain/build.py shell <cargo 子命令...>")
             print("例如：python toolchain/build.py shell build --release")
+            print("      python toolchain/build.py shell bundle   # 打 NSIS 安装包")
             return 2
+        if argv[2] == "bundle":
+            return bundle_target(argv[3:])
         return shell_target(argv[2:])
 
     target = argv[1]

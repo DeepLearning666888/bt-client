@@ -107,6 +107,12 @@ cmd = "python engine/tests/t_nat_field.py"
 ac = "AC-13"
 cmd = "python engine/tests/t_cors.py"
 
+# 非 ASCII 数据目录下端点文件必须是合法 UTF-8。曾经的缺陷：引擎把 GBK 字节写进 JSON，
+# 壳按 UTF-8 读失败，表现是「应用打开了但一直转圈」，两侧日志都无错。
+[[units.engine-service.evidence]]
+ac = "AC-14"
+cmd = "python engine/tests/t_path_encoding.py"
+
 
 # ------------------------------------------------------------- M2 桌面端
 # 前端命令全部走 toolchain/build.py desktop：gate.py 用 shell=False 执行，
@@ -191,6 +197,40 @@ cmd = "python desktop/tests/t_shell_single.py"
 [[units.tauri-shell.evidence]]
 ac = "AC-06"
 cmd = "python desktop/tests/t_shell_artifact.py"
+
+[units.installer]
+tier = "T2"
+build = [
+    "python toolchain/build.py desktop --build",
+    "python toolchain/build.py shell bundle",
+]
+
+[[units.installer.evidence]]
+ac = "AC-01"
+cmd = "python desktop/tests/t_installer_build.py"
+
+# 装到含空格的临时目录 → 从安装目录启动 → 断言 resource 路径与前端就绪
+[[units.installer.evidence]]
+ac = "AC-02"
+cmd = "python desktop/tests/t_installer_install.py"
+
+[[units.installer.evidence]]
+ac = "AC-03"
+cmd = "python desktop/tests/t_installer_install.py"
+
+[[units.installer.evidence]]
+ac = "AC-04"
+cmd = "python desktop/tests/t_installer_install.py"
+
+# AC-05 卸载
+[[units.installer.evidence]]
+ac = "AC-05"
+cmd = "python desktop/tests/t_installer_uninstall.py"
+
+# AC-06 判据是「装出来的目录里有什么」，必须真的装一次才能判
+[[units.installer.evidence]]
+ac = "AC-06"
+cmd = "python desktop/tests/t_installer_install.py"
 
 [units.crossmachine]
 tier = "T2"

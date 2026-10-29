@@ -261,7 +261,7 @@ int main(int argc, char** argv) {
                            ",\"token\":" + json::quote(token) +
                            ",\"pid\":" + std::to_string(::GetCurrentProcessId()) +
                            ",\"version\":" + json::quote(kVersion) +
-                           ",\"data_dir\":" + json::quote(data_dir) + "}";
+                           ",\"data_dir\":" + json::quote(platform::native_to_utf8(data_dir)) + "}";
     {
         std::string err;
         if (!platform::write_file_atomic(endpoint_path.string(), endpoint, err)) {

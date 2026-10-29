@@ -35,6 +35,16 @@
    不承担安全职责；防 DNS rebinding 靠 Host 检查。预检必须在认证之前放行，因为它按规范
    不带凭证，被 401 拦下同样等于放弃请求。
 
+5. **M2c 追加路径编码支持（AC-14）。** Windows 上 `main(int, char**)` 拿到的是 ANSI
+   （简中为 GBK）字节串。引擎内部用它是对的 —— `std::filesystem` 的窄字符串在 Windows 上
+   同样按 ANSI 解读，目录能正常创建。错的是把它**原样写进 `engine.endpoint.json` 的
+   `data_dir` 字段**：JSON 要求 UTF-8，壳按 UTF-8 读整文件直接失败，判定「端点不存在」
+   后重新拉起，最终超时 20 秒，两侧日志都不报错。
+   触发条件只是数据目录或安装路径含中文，而中文 Windows 的用户名目录很常见。
+   **既有测试一条都没抓到**，因为数据目录全是 `tempfile.mkdtemp()` 的纯 ASCII 路径。
+   修法是内部保持 ANSI、只在写 JSON 时转 UTF-8（`platform::native_to_utf8`）。
+   本题不该由「安装包」单元发现 —— 它是引擎自身在真实路径下的正确性问题。
+
 ## 验收标准
 
 - [AC-01] 引擎可独立构建产出 engine.exe | 判: `cmake --build engine/build` 退出码 0，`engine/build/engine.exe` 存在
@@ -50,6 +60,7 @@
 - [AC-11] 畸形请求返回 4xx 且引擎不崩溃 | 判: `python engine/tests/t_malformed.py` 退出码 0，覆盖超长头/错误 Content-Length/分块传输/超大 body 四类，之后 /health 仍 200
 - [AC-12] /state 内含 nat 字段且结构符合 natdiag 快照契约 | 判: `python engine/tests/t_nat_field.py` 退出码 0
 - [AC-13] 跨源请求可被浏览器放行：OPTIONS 预检返回 204 且带全套 CORS 头，正常与错误响应同样带跨源许可，方法白名单不放宽 | 判: `python engine/tests/t_cors.py` 退出码 0，12 项检查全通过
+- [AC-14] 非 ASCII 数据目录下端点文件是合法 UTF-8，且 `data_dir` 字段逐字符等于真实路径 | 判: `python engine/tests/t_path_encoding.py` 退出码 0（纯中文 / 中文+空格 / 混合符号三种目录，各 8 项检查）
 
 ## 不做范围
 
