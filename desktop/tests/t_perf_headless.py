@@ -36,7 +36,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
-DIST = ROOT / "desktop" / "dist"
+# 探针产物在 dist-perf，不与主应用的 dist 混放：
+# vite 构建主应用时会清空 outDir，共用目录会把探针产物一并删掉
+DIST = ROOT / "desktop" / "dist-perf"
 PAGE = DIST / "perf-standalone.html"
 REPORT_TIMEOUT_S = 120.0
 
@@ -335,7 +337,7 @@ def main() -> int:
     thread = None
     try:
         server, port, thread = serve()
-        print(f"本地服务：http://127.0.0.1:{port} （dist 目录 + /report 回传）")
+        print(f"本地服务：http://127.0.0.1:{port} （dist-perf 目录 + /report 回传）")
         with socket.create_connection(("127.0.0.1", port), timeout=2):
             pass
 

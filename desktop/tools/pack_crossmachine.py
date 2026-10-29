@@ -34,7 +34,7 @@ def sha256(path: Path) -> str:
 def main(argv: list[str]) -> int:
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="组装跨机测试包")
-    parser.add_argument("--src", default="desktop/dist/perf-standalone.html")
+    parser.add_argument("--src", default="desktop/dist-perf/perf-standalone.html")
     parser.add_argument("--out", default="crossmachine")
     args = parser.parse_args(argv[1:])
 

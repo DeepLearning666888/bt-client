@@ -62,6 +62,24 @@ JSON 里有三个场景，它们的作用不一样：
 
 ---
 
+## 另一份文件：`collect-env.ps1`
+
+双击（或在 PowerShell 里右键「使用 PowerShell 运行」）它会采集机器信息，写到 `out\` 目录。
+**只读，不改任何设置。** 内容全是英文 —— 这是故意的：中文脚本在部分系统的 PowerShell 里
+会因为编码判断错误而静默丢字段，英文能保证在任何语言版本的 Windows 上都采全。
+
+它和帧率 JSON 配套看。重点字段：
+
+| 字段 | 为什么看它 |
+|---|---|
+| `browsers.chrome.version` | 不同浏览器版本的光栅化行为有差异 |
+| `display.scalePercent` / `env.dpr` | 150% 或 200% 缩放下栅格化成本翻倍，帧率不可与 100% 直接比 |
+| `power.hint` | `power-saver` 会主动压刷新率 |
+| `gpus[].isVirtual` | 出现虚拟显示器（ToDesk / Parsec 等）说明合成路径可能被改写 |
+| `virtualization.caveat` | 四档：`clean` / `virtual-display-present`（仅装了虚拟显示器）/ `remote-tool-running`（远程工具在跑）/ `remote-session`（真的在远程会话里）。后两档的帧率数据要打折看 |
+
+---
+
 ## 这个包不测什么
 
 - 不测下载速度、不测网络、不测引擎。这是纯前端渲染测试，不连任何服务器。
@@ -77,4 +95,14 @@ JSON 里有三个场景，它们的作用不一样：
 |---|---|
 | `perf.html` | 测试页面，单文件自包含，双击即开 |
 | `collect-env.ps1` | 采集机器环境，结果写到 `out\` 目录 |
+| `MANIFEST.json` | 产物的 sha256 清单，用于确认这份包是本次构建的 |
 | `RUN.md` | 本文件 |
+
+`perf.html` 与 `MANIFEST.json` 是构建产物，不在版本库里。如果你拿到的是一个空目录或
+缺这两个文件，在本机项目根目录跑：
+
+```
+python toolchain/build.py desktop --perf
+python toolchain/build.py crossmachine
+```
+

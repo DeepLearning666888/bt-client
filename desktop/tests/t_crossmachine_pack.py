@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from inline_perf import find_external_refs  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-DIST_PAGE = ROOT / "desktop" / "dist" / "perf-standalone.html"
+DIST_PAGE = ROOT / "desktop" / "dist-perf" / "perf-standalone.html"
 PACK = ROOT / "crossmachine"
 MANIFEST_NAME = "MANIFEST.json"
 REQUIRED = ("RUN.md", "collect-env.ps1", "perf.html", MANIFEST_NAME)

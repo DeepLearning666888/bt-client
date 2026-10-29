@@ -115,7 +115,9 @@ def find_external_refs(html: str) -> list[str]:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="探针页内联为单文件")
     parser.add_argument("--in", dest="src", default="desktop/dist-perf/perf.html")
-    parser.add_argument("--out", dest="dst", default="desktop/dist/perf-standalone.html")
+    # 输出必须留在 dist-perf 下，不能放进 dist/：vite 构建主应用时会清空 outDir，
+    # 把这里的产物一起删掉（实测踩过，表现为「打包脚本突然找不到文件」）
+    parser.add_argument("--out", dest="dst", default="desktop/dist-perf/perf-standalone.html")
     args = parser.parse_args(argv[1:])
 
     root = Path(__file__).resolve().parents[2]

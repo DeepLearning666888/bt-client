@@ -58,7 +58,7 @@ renderer 字符串识别：命中则把环境标记为 `software`，帧率数据
 - [AC-03] 布局动画违规可被静态识别 | 判: 同上，对含 `transition: width` 的样本返回非空违规；对只含 `transform`/`opacity` 的样本返回空
 - [AC-04] 报告结构完整、可 JSON 往返 | 判: 同上，断言 `buildReport()` 含 ua/dpr/screen/scenarios/verdict 且 `JSON.parse(JSON.stringify(x))` 与原值深相等
 - [AC-05] 软渲染环境降级为 env-limited 而非 fail | 判: 同上，注入 SwiftShader 指纹样本断言档位为 `env-limited`
-- [AC-06] 生产构建产出单文件探针，无任何外部引用 | 判: `python toolchain/build.py desktop --perf` 退出码 0，且 `desktop/dist/perf-standalone.html` 不含 `src="./assets`、`href="./assets`、`http://`、`https://`
+- [AC-06] 生产构建产出单文件探针，无任何外部引用 | 判: `python toolchain/build.py desktop --perf` 退出码 0，且 `desktop/dist-perf/perf-standalone.html` 不含 `src="./assets`、`href="./assets`、`http://`、`https://`
 - [AC-07] 真实浏览器（headless Chrome）能跑完整流程并回传合法报告 | 判: `python desktop/tests/t_perf_headless.py` 退出码 0
 - [AC-08] 跨机包文件齐全且与构建产物字节一致 | 判: `python desktop/tests/t_crossmachine_pack.py` 退出码 0
 
@@ -90,6 +90,10 @@ renderer 字符串识别：命中则把环境标记为 `software`，帧率数据
    另外 `collect-env.ps1` 的 `caveat` 分四档（`clean` / `virtual-display-present` /
    `remote-tool-running` / `remote-session`）—— 装了远程工具不等于正在被远程控制，
    一刀切成「不可信」会让提示失去意义。
+8. **探针产物输出到 `desktop/dist-perf/`，不进 `desktop/dist/`。** 最初复用了 `dist/`，
+   结果跑一次主应用的 `vite build`（`emptyOutDir` 为真）就把 `perf-standalone.html` 删了，
+   表现为「打包脚本突然找不到文件」。两个构建目标不能共用输出目录，这条已在
+   `inline_perf.py` 与 `t_perf_headless.py` 的注释里写明原因，避免以后有人「顺手合并」。
 
 ## 本机实测结论（headless，不代表真机）
 
