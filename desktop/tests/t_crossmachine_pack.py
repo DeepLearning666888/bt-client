@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
+import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -55,6 +57,99 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(65536), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def check_archive(problems: list[str], manifest: dict) -> int:
+    """校验压缩包，返回发现的问题数（同时追加进 problems）。
+
+    换电脑时真正被拷走的只有这一个 zip。目录形态完整不代表压缩包完整 ——
+    压包是另一步操作，两边会走偏，所以必须单独判定。
+    """
+
+    def fail(msg: str) -> None:
+        problems.append(msg)
+
+    before = len(problems)
+
+    rel = manifest.get("archive")
+    if not rel:
+        fail("MANIFEST 未声明压缩包路径（archive 字段为空）")
+        return len(problems) - before
+
+    archive = ROOT / rel
+    if not archive.is_file():
+        fail(f"压缩包不存在：{rel}（先跑 python toolchain/build.py crossmachine）")
+        return len(problems) - before
+
+    archive_root = manifest.get("archiveRoot") or ""
+    declared = manifest.get("archiveEntries") or []
+    if not declared:
+        fail("MANIFEST 未声明压缩包条目集（archiveEntries 为空）")
+
+    with zipfile.ZipFile(archive) as handle:
+        infos = handle.infolist()
+        names = [info.filename for info in infos]
+
+        expected = [f"{archive_root}/{name}" for name in declared]
+        if names != expected:
+            fail(f"压缩包条目与声明不符：{names}，期望 {expected}")
+
+        for name in names:
+            parts = [part for part in name.split("/") if part]
+            # 条目名可以是 ../x，解压后会写到目标目录之外
+            if name.startswith("/") or ".." in parts:
+                fail(f"压缩包条目路径不安全：{name}")
+            # 采集结果属于采它的那台机器，不该跟着包发出去
+            if len(parts) >= 2 and parts[1] == "out":
+                fail(f"压缩包里混入了采集结果：{name}")
+
+        for info in infos:
+            base = info.filename.split("/", 1)[-1]
+            local = PACK / base
+            if not local.is_file():
+                fail(f"压缩包里的 {base} 在目录中不存在")
+            elif sha256_bytes(handle.read(info)) != sha256(local):
+                fail(f"压缩包里的 {base} 与目录中的内容不一致")
+
+        # 可复现的必要条件：时间戳与宿主系统标记固定。缺了它们，同一份输入
+        # 在不同机器或不同时刻会压出不同字节，sha256 就失去「包的身份」这层含义。
+        stamps = {info.date_time for info in infos}
+        if stamps != {(1980, 1, 1, 0, 0, 0)}:
+            fail(f"压缩包时间戳不固定：{sorted(stamps)[:3]}，打包不可复现")
+        if {info.create_system for info in infos} != {0}:
+            fail("压缩包 create_system 不固定，跨平台打包结果会漂移")
+
+    # 可复现的充分验证：原样重打一次，哈希必须不变
+    original = sha256(archive)
+    rerun = subprocess.run(
+        [sys.executable, str(ROOT / "desktop" / "tools" / "pack_crossmachine.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if rerun.returncode != 0:
+        fail(f"重跑打包器失败（退出码 {rerun.returncode}）：{(rerun.stderr or '')[-300:]}")
+    elif sha256(archive) != original:
+        fail("重打同一份输入得到不同的压缩包，sha256 无法作为包的标识")
+
+    # 旁边的 .sha256 给「目标机没有 Python」时用资源管理器/自带命令核对
+    sidecar = archive.with_name(archive.name + ".sha256")
+    if not sidecar.is_file():
+        fail(f"缺少校验文件 {sidecar.name}")
+    elif original not in sidecar.read_text(encoding="utf-8"):
+        fail(f"{sidecar.name} 里的哈希与压缩包实际值不符")
+
+    if not problems[before:]:
+        print(
+            f"  ✓ {archive.name}  {archive.stat().st_size / 1024:.1f} KB  "
+            f"{len(declared)} 条目  sha256={original[:16]}…  重打一致"
+        )
+    return len(problems) - before
 
 
 def main() -> int:
@@ -109,11 +204,17 @@ def main() -> int:
         actual = sha256(PACK / entry["name"])
         if actual != entry["sha256"]:
             problems.append(f"MANIFEST 里 {entry['name']} 的 sha256 与实际文件不符")
+        if not entry.get("purpose") or "installRequired" not in entry:
+            problems.append(f"MANIFEST 里 {entry['name']} 缺少 purpose 或 installRequired 字段")
     declared = {entry["name"] for entry in manifest.get("files", [])}
     expected = set(REQUIRED) - {MANIFEST_NAME}
     if declared != expected:
         problems.append(f"MANIFEST 声明的文件集不对：{sorted(declared)}，期望 {sorted(expected)}")
-    print(f"③ 清单校验（{len(manifest.get('files', []))} 项）")
+    # 「换电脑要装什么」是用户最先问的问题，答案必须写在清单里而不是靠人推断
+    target = manifest.get("target") or {}
+    if not isinstance(target.get("installRequired"), list):
+        problems.append("MANIFEST 缺少 target.installRequired")
+    print(f"③ 清单校验（{len(manifest.get('files', []))} 项，需安装 {target.get('installRequired') or '无'}）")
 
     # ④ 页面真自包含
     html = pack_page.read_text(encoding="utf-8")
@@ -190,6 +291,11 @@ def main() -> int:
             problems.append(f"RUN.md 没有说明「{label}」")
             doc_issues += 1
     print(f"⑧ 操作说明覆盖度 {'✓' if doc_issues == 0 else f'缺 {doc_issues} 项'}")
+
+    # ⑨ 压缩包：换电脑时真正被拷走的只有这一个文件，所以它必须自证完整。
+    # 目录形态完整不代表压缩包完整 —— 压包是另一步操作，两边会走偏。
+    archive_issues = check_archive(problems, manifest)
+    print(f"⑨ 压缩包 {'✓' if archive_issues == 0 else f'✗ {archive_issues} 项'}")
 
     print()
     if problems:

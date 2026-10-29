@@ -61,6 +61,7 @@ renderer 字符串识别：命中则把环境标记为 `software`，帧率数据
 - [AC-06] 生产构建产出单文件探针，无任何外部引用 | 判: `python toolchain/build.py desktop --perf` 退出码 0，且 `desktop/dist-perf/perf-standalone.html` 不含 `src="./assets`、`href="./assets`、`http://`、`https://`
 - [AC-07] 真实浏览器（headless Chrome）能跑完整流程并回传合法报告 | 判: `python desktop/tests/t_perf_headless.py` 退出码 0
 - [AC-08] 跨机包文件齐全且与构建产物字节一致 | 判: `python desktop/tests/t_crossmachine_pack.py` 退出码 0
+- [AC-09] 换机用的压缩包单文件产出，解压即用、内容可核对 | 判: `python toolchain/build.py crossmachine` 退出码 0，且 `crossmachine/dist/crossmachine-pack-v1.zip` 存在；`python desktop/tests/t_crossmachine_pack.py` 的第 ⑨ 项通过（条目集与 `MANIFEST.archiveEntries` 一致、逐条 sha256 与目录同名文件一致、时间戳与 create_system 固定、原样重打一次哈希不变、旁附 `.sha256` 匹配）；`MANIFEST.target.installRequired` 为空数组
 
 ## 实现期偏离（与批准版本的差异）
 
@@ -81,7 +82,10 @@ renderer 字符串识别：命中则把环境标记为 `software`，帧率数据
    会把无 BOM 的 UTF-8 按 ANSI（中文环境为 936）解码，中文注释的字节被误读后吞掉换行，
    把下一行赋值并进注释里。**这个失败是静默的**：脚本照常运行，只是 `driverDate` 和
    `remoteToolsRunning` 两个字段凭空消失。踩过一次，现已用断言锁住（AC-08 的第 ⑦b 项）。
-5. **`MANIFEST.json` 不列自身。** 要求清单包含自己的哈希是不可能的自指。
+5. **`MANIFEST.json` 的 `files` 不列自身，另用 `archiveEntries` 声明压缩包全集。**
+   要求清单包含自己的哈希是不可能的自指。但压缩包里必须含清单（否则收到包的人无从核对），
+   于是清单记录的「内容文件」与「压缩包条目」是两个集合，差值恰好是清单自己。
+   这个差值不写出来就要靠人记，所以显式声明。
 6. **`ScenarioDef` 的 `scrollMs` 拆成 `sampleMs` + `scroll`。** 原设计用 `scrollMs === 0`
    表示「不滚动」，同时又要表达「采样多久」，一个字段担两个语义；S1 的 1000ms 采样时长
    因此只能硬编码在页面里。拆开后三场景只共享同一段代码路径。
@@ -94,6 +98,12 @@ renderer 字符串识别：命中则把环境标记为 `software`，帧率数据
    结果跑一次主应用的 `vite build`（`emptyOutDir` 为真）就把 `perf-standalone.html` 删了，
    表现为「打包脚本突然找不到文件」。两个构建目标不能共用输出目录，这条已在
    `inline_perf.py` 与 `t_perf_headless.py` 的注释里写明原因，避免以后有人「顺手合并」。
+9. **压缩包做成可复现的（AC-09）。** 固定条目顺序、时间戳 `1980-01-01`、`create_system=0`。
+   不做这一步，同一份输入在不同时刻压出的字节不同，sha256 只能证明「文件没被改」，
+   证不了「这个包就是那次构建的」。测试里原样重打一次比对哈希，把这个性质锁住。
+10. **目标机的安装要求写进清单，不只写进文档。** `target.installRequired` 是空数组，
+    `target.prerequisites` 列出 Chrome/Edge 与 PowerShell 5.1+。结论是「零安装」，
+    但结论本身要能被机器读到 —— 换机器时第一个问题就是「要装什么」。
 
 ## 本机实测结论（headless，不代表真机）
 

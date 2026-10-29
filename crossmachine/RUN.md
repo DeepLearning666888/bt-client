@@ -8,14 +8,38 @@
 
 ## 怎么用
 
-1. 把整个文件夹拷到目标电脑。
-2. 双击 `perf.html`，用 **Chrome 或 Edge** 打开。
+1. 把 `crossmachine-pack-v1.zip` 拷到目标电脑，解压（右键「全部解压缩」即可）。
+   解压出来是一个 `crossmachine-pack-v1` 文件夹，四个文件平铺在里面。
+2. 双击其中的 `perf.html`，用 **Chrome 或 Edge** 打开。
    （不要用 IE、不要用微信内置浏览器）
 3. 点「开始测量」，等约 10 秒。
 4. 跑完点「保存结果 JSON」，文件会进「下载」目录。
 5. 把那个 JSON 发回来。想更准确的话，双击 `collect-env.ps1` 采一份机器信息一起发。
 
 **建议跑两次，发第二次的。** 第一次可能包含磁盘冷启动和字体加载的额外开销。
+
+### 需要装什么
+
+**什么都不用装。** 页面是纯静态 HTML，无外链、无模块解析；脚本是 PowerShell 5.1 语法。
+Windows 10/11 自带 Edge 和 PowerShell，解压即用。
+
+唯一前提是有一个现代浏览器（Edge 或 Chrome 任一）和一个能解压 zip 的东西
+（Windows 自带资源管理器就够）。这条也写在 `MANIFEST.json` 的 `target` 段里，
+不是口头承诺。
+
+### 怎么确认这份包没被换过
+
+`crossmachine-pack-v1.zip` 旁边有一个 `crossmachine-pack-v1.zip.sha256`。
+在 PowerShell 里：
+
+```powershell
+Get-FileHash .\crossmachine-pack-v1.zip -Algorithm SHA256
+```
+
+输出里的 `Hash` 值和 `.sha256` 文件里那一串一致，就是原包。不一致说明传输过程中
+损坏，或者拿到的是别的版本 —— 换一份再试，别拿它测数据。
+
+包内每个文件的哈希记在 `MANIFEST.json` 的 `files` 数组里，解压后可以逐个比对。
 
 ---
 
@@ -91,12 +115,15 @@ JSON 里有三个场景，它们的作用不一样：
 
 ## 文件说明
 
-| 文件 | 作用 |
-|---|---|
-| `perf.html` | 测试页面，单文件自包含，双击即开 |
-| `collect-env.ps1` | 采集机器环境，结果写到 `out\` 目录 |
-| `MANIFEST.json` | 产物的 sha256 清单，用于确认这份包是本次构建的 |
-| `RUN.md` | 本文件 |
+| 文件 | 作用 | 需要安装 |
+|---|---|---|
+| `perf.html` | 测试页面，单文件自包含，双击即开 | 否 |
+| `collect-env.ps1` | 采集机器环境，结果写到 `out\` 目录 | 否 |
+| `MANIFEST.json` | 清单：每个文件的 sha256、用途、是否需安装 | 否 |
+| `RUN.md` | 本文件 | 否 |
+
+压缩包本身在项目里是 `crossmachine/dist/crossmachine-pack-v1.zip`，
+换电脑只需要拷这一个文件。
 
 `perf.html` 与 `MANIFEST.json` 是构建产物，不在版本库里。如果你拿到的是一个空目录或
 缺这两个文件，在本机项目根目录跑：
@@ -105,4 +132,7 @@ JSON 里有三个场景，它们的作用不一样：
 python toolchain/build.py desktop --perf
 python toolchain/build.py crossmachine
 ```
+
+第二条命令会同时更新目录内容和重新压出 zip。压缩包是可复现的 —— 同一份输入
+重打多少次，哈希都一样，所以上面的核对方法才有意义。
 

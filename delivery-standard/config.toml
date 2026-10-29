@@ -195,6 +195,13 @@ cmd = "python desktop/tests/t_perf_headless.py"
 ac = "AC-08"
 cmd = "python desktop/tests/t_crossmachine_pack.py"
 
+# AC-09 与 AC-08 同一个判定入口：第 ⑨ 项专门验压缩包（条目集、逐条哈希、
+# 时间戳固定、原样重打一致、旁附 .sha256 匹配）。分开列是因为它们是两件事：
+# 目录形态完整不等于换机时被拷走的那个 zip 完整。
+[[units.crossmachine.evidence]]
+ac = "AC-09"
+cmd = "python desktop/tests/t_crossmachine_pack.py"
+
 # ------------------------------------------------------------- 负向对照单元
 # 故意不提供 specs/__negative__.md。AC-03 依赖它稳定失败，
 # 以此证明 G1 不会对缺失输入误判为通过。

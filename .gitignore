@@ -43,6 +43,8 @@ desktop/*.log
 crossmachine/perf.html
 crossmachine/MANIFEST.json
 crossmachine/out/
+# 压缩包与 .sha256 都是产物，同样可由上面两条命令重建
+crossmachine/dist/
 
 # ------------------------------------------------------ 本地留底（不进库）
 # 无 SSL 版 libtorrent 构建产物备份，重编覆盖前的唯一退路
