@@ -108,14 +108,32 @@ VERDICT: READY
 5. 点「开始测量」，等约 10 秒。
 6. 跑完点「保存结果 JSON」，文件进「下载」目录。
 7. **再跑第二遍，发第二遍的。** 第一遍会带上磁盘冷启动和字体加载的额外开销。
-8. 采集机器环境（可选但强烈建议）：
+8. 采集机器环境（可选但强烈建议，约 5 秒）。**必须做的一步是「进对目录」**：
 
-   ```powershell
-   cd 01-perf\crossmachine-pack-v1
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-env.ps1
-   ```
+   1. 打开解压出来的 `crossmachine-pack-v1` 文件夹 —— 就是 `perf.html` 所在的那一层，
+      里面有 4 个文件（`perf.html` / `collect-env.ps1` / `RUN.md` / `MANIFEST.json`）。
+   2. 在这层文件夹的**空白处**按住 `Shift` 再点右键 →「在此处打开 PowerShell 窗口」。
+      （Win11 如果只有「在终端中打开」，点它也行，效果一样。）
+   3. 在那个窗口里粘贴下面这一行，回车：
 
-   同样别双击。结果写到**那个文件夹里**的 `out\` 目录。**只读，不改任何设置。**
+      ```powershell
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-env.ps1
+      ```
+
+   4. 它会先把整份 JSON 打到屏幕上（很长，几十行，**属正常**），**最后一行**是
+      `written to C:\...\out\env_<计算机名>.json`。看到这行就是成功。
+   5. 结果落在**脚本旁边**的 `out\` 目录里，文件名是 `env_<计算机名>.json`。
+      想直接打开确认：`explorer .\out`
+
+   **为什么必须先进那个目录**：`.\collect-env.ps1` 是相对路径，在别处执行会报
+   「找不到路径」。至于结果写到哪里，跟你在哪个目录执行**无关** —— 脚本自己认自己的位置，
+   永远写到自己旁边的 `out\`。
+
+   同样别双击（默认会用记事本打开）。**只读、不联网、不改任何设置**，采的是 CPU / 显卡 /
+   显示器分辨率与缩放 / 电源计划 / 浏览器版本 / WebView2 版本 / 是否在远程会话里。
+
+   如果 **30 秒还没结束**，按 `Ctrl+C` 跳过就行 —— 它查的是 WMI，个别机器 WMI 有问题会卡。
+   这段数据只用来**解读**帧率，缺了不影响轨道 A 本身。
 
 跑之前记得：笔记本插电源、电源计划切「高性能」、关掉视频/直播/游戏、关掉「减少动态效果」。
 
@@ -223,7 +241,7 @@ explorer "$env:APPDATA\com.btclient.desktop"
 |---|---|---|
 | `out\preflight.txt` | 自动生成 | 前置检查结论 |
 | `perf-*.json` | 轨道 A 保存按钮 | **发第二次的** |
-| `env-*.json` | 轨道 A 的 `collect-env.ps1` | 机器画像，配着帧率看 |
+| `env_<计算机名>.json` | 轨道 A 的 `collect-env.ps1` | 机器画像，配着帧率看；在那份 zip 解压后的 `out\` 里 |
 | `shell.log` | `%APPDATA%\com.btclient.desktop\` | 轨道 B 的日志 |
 | `CHECKLIST.md` | 填好的 | 人工观察的全部内容 |
 | 截图 | 安装向导每页 + 界面 | 命名随意，按顺序编号最好 |
