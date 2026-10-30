@@ -55,10 +55,9 @@ def main() -> int:
 
         env = dict(os.environ)
         env["BTCLIENT_DATA_DIR"] = str(data)
-        proc = subprocess.Popen([str(install / "btclient-shell.exe")], env=env,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        ready = common.wait_for(common.READY_RE, data / "shell.log", proc, 90.0)
-        common.stop(proc)
+        ready, attempts = common.launch_and_wait(install, data, timeout=90.0)
+        if attempts > 1:
+            print(f"  （启动重试了 {attempts - 1} 次：WebView2 用户数据目录被上一轮占用）")
         common.check("启动成功并产生数据", ready is not None,
                      f"seq={ready.group(2)}" if ready else "没拿到 frontend_ready", problems)
 

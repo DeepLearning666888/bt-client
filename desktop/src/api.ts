@@ -12,17 +12,35 @@ export type TorrentState =
   | 'seeding'
   | 'paused'
   | 'checking'
+  | 'metadata'
+  | 'finished'
   | 'queued'
   | 'allocating'
+  | 'pending'
+  | 'other'
   | 'unknown'
 
-const KNOWN_STATES: readonly TorrentState[] = [
+/** 引擎可能吐出的全部状态。
+ *
+ * 这份集合必须覆盖 `engine/src/engine.cpp` 里 `state_name()` 的返回值，外加
+ * `rebuild_state()` 在拿到 handle 之前用的 `pending`。漏一个的后果是真实任务被
+ * 当成 `unknown`、并且整份快照被标成 degraded —— 界面上就是一条黄色警告加
+ * 一个看不懂的 `unknown`。磁力任务刚添加时正好停在 `metadata`，所以漏了它必然
+ * 每次都触发。
+ *
+ * 两边靠 `tests/state-vocab.test.ts` 从引擎源码里抓字面量交叉校验，不靠自觉。
+ */
+export const KNOWN_STATES: readonly TorrentState[] = [
   'downloading',
   'seeding',
   'paused',
   'checking',
+  'metadata',
+  'finished',
   'queued',
   'allocating',
+  'pending',
+  'other',
 ]
 
 export interface Torrent {

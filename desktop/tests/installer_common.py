@@ -104,11 +104,19 @@ def run_uninstall(install: Path, timeout: float = 180.0) -> int:
     当成路径做转换，变成 `S:\\` 之类传给卸载器。卸载器收到一个不认识的参数，
     不走静默分支，返回 0 却什么都没删 —— 看起来就像「卸载功能坏了」。
     用 Python 或 cmd 调用才是可信的。
+
+    **命令行必须是单条字符串，且卸载器路径必须是完整的。**
+    `subprocess.run(['uninstall.exe', '/S'], cwd=install)` 看着更干净，实际不干活：
+    卸载器收到的 argv[0] 是裸文件名，它判断「自己已经在临时目录里了」，跳过
+    『把自己复制出去再执行』那一步，直接退出并返回 0 —— 目录里一个文件都不会少。
+    三种写法实测：列表 + cwd **失败**、字符串 **成功**、字符串 + cwd **成功**。
+    退出码在失败和成功时都是 0，只看返回值永远发现不了。
     """
     uninstaller = install / "uninstall.exe"
     if not uninstaller.exists():
         raise SystemExit(f"找不到 {uninstaller}")
-    result = subprocess.run([str(uninstaller), "/S"], capture_output=True, timeout=timeout)
+    cmdline = f'"{uninstaller}" /S'
+    result = subprocess.run(cmdline, cwd=str(install), capture_output=True, timeout=timeout)
     return result.returncode
 
 
@@ -133,6 +141,37 @@ def wait_for(pattern: re.Pattern[str], log_path: Path, proc: subprocess.Popen[by
             return None
         time.sleep(0.2)
     return None
+
+
+def launch_and_wait(install: Path, data: Path, timeout: float = 90.0,
+                    attempts: int = 2) -> tuple[re.Match[str] | None, int]:
+    """启动已安装的壳并等首帧回报，失败自动重试。返回 (匹配结果, 实际用了几次)。
+
+    重试不是「不稳定就多跑几遍」：WebView2 的用户数据目录
+    （`%LOCALAPPDATA%\\<bundle-id>\\EBWebView`）是进程间共享的，上一个实例的
+    WebView2 子进程退干净要几百毫秒。自动化里连续启停时，下一轮会撞上这个锁，
+    表现为 `WebviewWindowBuilder::build()` 返回 Err、壳直接退出，日志停在
+    `engine decision=` 而没有 `window shown`。真机用户不会秒开秒关，所以这是
+    测试自污染，不是产品缺陷 —— 但让测试偶发变红，比多写十行更难查。
+    """
+    env = dict(os.environ)
+    env["BTCLIENT_DATA_DIR"] = str(data)
+    log = data / "shell.log"
+
+    for attempt in range(1, attempts + 1):
+        # 上一轮残留的 frontend_ready 会被当成本轮成功，必须清掉
+        if log.exists():
+            log.unlink()
+        proc = subprocess.Popen([str(install / "btclient-shell.exe")], env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ready = wait_for(READY_RE, log, proc, timeout)
+        stop(proc)
+        if ready is not None:
+            return ready, attempt
+        if attempt < attempts:
+            print(f"  第 {attempt} 次启动没拿到首帧，等 WebView2 释放后重试")
+            time.sleep(3.0)
+    return None, attempts
 
 
 def stop(proc: subprocess.Popen[bytes], timeout: float = 15.0) -> None:

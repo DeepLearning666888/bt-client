@@ -10,6 +10,7 @@
 import { useState } from 'react'
 import type { UIEvent } from 'react'
 import type { Torrent } from '../api'
+import { STATE_LABELS } from '../labels'
 
 export const DEFAULT_ROW_HEIGHT = 64
 export const DEFAULT_VIEWPORT_HEIGHT = 480
@@ -49,7 +50,7 @@ function TorrentRow({ torrent, height }: { torrent: Torrent; height: number }) {
           {torrent.name}
         </span>
         <span className="row-meta">
-          {torrent.state} · {torrent.peers} peer · {torrent.seeds} seed ·{' '}
+          {STATE_LABELS[torrent.state]} · {torrent.peers} peer · {torrent.seeds} seed ·{' '}
           {formatProgress(torrent.progress)}
         </span>
       </div>

@@ -189,7 +189,8 @@ btclient-shell.exe   engine.exe   torrent-rasterbar.dll   uninstall.exe
 看什么：
 
 - 顶部横幅有没有出现「正在连接引擎…」并停留很久（超过 5 秒不正常）
-- 底部 `seq` 数字是否在每秒递增（在涨 = 前端和引擎的通路是活的）
+- 底部 `seq` 数字是否在动（在变 = 前端和引擎的通路是活的）。**它不是严格每秒 +1**：
+  引擎只在数据内容真的变了才加一，所以二十来分钟涨到六七百是正常的，别以为是卡了。
 - 空列表的提示文案、字体、行高、边距、滚动条外观 → 截图
 - 窗口能不能拖动、缩放、最大化
 - 关掉窗口，任务管理器里 `btclient-shell.exe` 和 `engine.exe` 是否都退出了
@@ -200,7 +201,7 @@ btclient-shell.exe   engine.exe   torrent-rasterbar.dll   uninstall.exe
 首次启动是空列表。想看带数据的样子，可以在应用**开着**的时候开后一个 PowerShell 窗口：
 
 ```powershell
-$ep  = Get-Content "$env:APPDATA\com.btclient.desktop\engine.endpoint.json" -Raw | ConvertFrom-Json
+$ep  = Get-Content "$env:APPDATA\com.btclient.desktop\engine\engine.endpoint.json" -Raw | ConvertFrom-Json
 $hdr = @{ Authorization = "Bearer $($ep.token)" }
 $body = @{ magnet = 'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny' } | ConvertTo-Json
 Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents" -Method Post -Headers $hdr -ContentType 'application/json' -Body $body
@@ -212,6 +213,15 @@ Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents" -Method Post -Hea
 ```powershell
 Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents/dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c?delete_files=1" -Method Delete -Headers $hdr
 ```
+
+**加完之后界面上该看到什么**：列表里出现一行，状态写「获取元数据中」，几十秒到几分钟后变成
+「下载中」或「做种中」。
+
+如果状态显示成英文 `unknown`，同时顶部多出一条黄色的「部分字段无法解析，已按安全值降级显示」——
+说明你装的是首版安装包（0.1.0 首版有状态词表对齐缺陷，已在本包里修掉）。这是判断新旧版
+**最直接**的办法，比看版本号可靠。
+
+**顺序：先卸载旧版，再装本包里这份。** 覆盖安装这条路没验证过，不要走。
 
 ### B5 卸载
 
@@ -269,8 +279,8 @@ explorer "$env:APPDATA\com.btclient.desktop"
 | 现象 | 为什么 |
 |---|---|
 | SmartScreen 蓝色警告「未知发布者」 | 安装包没有代码签名，本轮刻意不做 |
-| 首次启动有几秒白屏 | 引擎冷启动 + 第一次读数据目录，2-4 秒属正常 |
-| 底部 `seq` 从 0 开始数 | 每次启动都重头计 |
+| 首次启动有 1 秒左右白屏 | 实测真机 1.3 秒出首帧（引擎 0.3 秒起来，窗口 1.1 秒，画面再补 0.2 秒） |
+| 底部 `seq` 从 0 开始数 | 每次启动都重头计，且只在数据内容变化时 +1，不是秒表 |
 | 空列表 + 顶部「正在连接引擎…」一闪而过 | 前端先连上引擎再拿数据 |
 | 杀毒软件提示「未知程序」 | 同上，未签名 |
 | 卸载后安装目录还在，但里面空了 | 正常，程序文件删了、目录壳不一定删；只要 4 个文件都没了就算清干净 |
