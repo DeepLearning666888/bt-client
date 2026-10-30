@@ -55,3 +55,10 @@ crossmachine/dist/
 # ------------------------------------------------------ 本地留底（不进库）
 # 无 SSL 版 libtorrent 构建产物备份，重编覆盖前的唯一退路
 artifacts/
+
+# ------------------------------------------------- 真机执行包（handoff）
+# 手写件（README.md / CHECKLIST.md / preflight.ps1）入库；
+# dist/ 是把安装包、帧率包、运行库复制到一起的产物（3.3 MB），可由
+# `python toolchain/pack_handoff.py` 重建；out/ 是脚本在本机跑出来的报告。
+handoff/dist/
+handoff/out/

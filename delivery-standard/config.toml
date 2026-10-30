@@ -283,6 +283,36 @@ cmd = "python desktop/tests/t_crossmachine_pack.py"
 ac = "AC-09"
 cmd = "python desktop/tests/t_crossmachine_pack.py"
 
+# --------------------------------------------------------- 真机执行包（field-test）
+# 这一单元的产物不是代码，是「拷到另一台电脑就能跑」的目录 + 说明书。
+# 因此 build 是组装（含复制安装包与组装 zip），验收脚本事后核对目录、哈希与文档闭环。
+#
+# AC-02..AC-04 共用一个入口：它们是三件不同的事（真跑、能说不、文档不漏），
+# 但判定都落在同一个脚本的退出码上，拆成三个命令只会让「跑一次」变三次。
+[units.field-test]
+tier = "T2"
+build = [
+    "python toolchain/build.py desktop --perf",
+    "python toolchain/build.py crossmachine",
+    "python toolchain/pack_handoff.py",
+]
+
+[[units.field-test.evidence]]
+ac = "AC-01"
+cmd = "python desktop/tests/t_fieldtest_pack.py"
+
+[[units.field-test.evidence]]
+ac = "AC-02"
+cmd = "python desktop/tests/t_fieldtest_pack.py"
+
+[[units.field-test.evidence]]
+ac = "AC-03"
+cmd = "python desktop/tests/t_fieldtest_pack.py"
+
+[[units.field-test.evidence]]
+ac = "AC-04"
+cmd = "python desktop/tests/t_fieldtest_pack.py"
+
 # ------------------------------------------------------------- 负向对照单元
 # 故意不提供 specs/__negative__.md。AC-03 依赖它稳定失败，
 # 以此证明 G1 不会对缺失输入误判为通过。

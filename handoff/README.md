@@ -1,0 +1,267 @@
+# 真机测试执行包 · 操作手册
+
+这台电脑上做不了的两件事，在这个包里：**帧率数据** 和 **安装向导/界面的人工目视验收**。
+
+全程大概 45 分钟，分两条独立的轨道，可以只做其中一条：
+
+| 轨道 | 做什么 | 多久 | 会不会装东西 |
+|---|---|---|---|
+| **A 渲染与帧率** | 在浏览器里跑一个页面，存一份 JSON | 15 分钟 | 不装 |
+| **B 安装包与界面** | 真双击装一遍、启动、看界面、卸载 | 25 分钟 | 会装（可在最后卸掉） |
+
+**先做第 1 步的前置检查。** 有几个东西缺了会当场跑不起来，而现象跟「程序有 bug」长得一模一样，
+事先查一遍能省掉一整轮排查。
+
+---
+
+## 包里的文件
+
+```
+field-test-pack-v1\
+├─ README.md                          ← 本文件
+├─ CHECKLIST.md                       ← 人工观察记录表（要填了发回来）
+├─ preflight.ps1                      ← 前置检查脚本（只读，不改任何设置）
+├─ SHA256SUMS.txt                     ← 每个文件的哈希，拿到后可以先核对
+├─ 01-perf\
+│   ├─ crossmachine-pack-v1.zip       ← 帧率测试包（解压后双击网页）
+│   └─ crossmachine-pack-v1.zip.sha256
+└─ 02-installer\
+    ├─ BT-client_0.1.0_x64-setup.exe  ← 安装包
+    └─ plan-b-vcruntime\              ← 备用：VC++ 运行库缺失时才用，别提前拷
+        ├─ msvcp140.dll
+        ├─ vcruntime140.dll
+        └─ vcruntime140_1.dll
+```
+
+---
+
+## 第 0 步：把包弄到目标机上
+
+**用 U 盘或移动硬盘整目录拷。** 微信 / QQ 传 `.exe` 经常被改名成 `.exe_` 或者直接拒收，
+改回去之后能不能跑是另一回事，不值得在这上面赌。
+
+拷完先在目标机上核对一下没坏：
+
+```powershell
+cd <包所在目录>
+Get-FileHash .\02-installer\BT-client_0.1.0_x64-setup.exe -Algorithm SHA256
+```
+
+和 `SHA256SUMS.txt` 里同名文件那一行对比，一致就是原包。
+
+---
+
+## 第 1 步：前置检查（必做，约 2 分钟）
+
+在包里那个目录，按住 `Shift` 右键空白处 →「在此处打开 PowerShell 窗口」，然后：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\preflight.ps1
+```
+
+> **别双击 `preflight.ps1`。** Windows 对 `.ps1` 的默认动作是「用记事本打开」，双击看到的是代码，
+> 不是结果。必须用上面这行。
+
+正常输出长这样（每行一个检查项）：
+
+```
+[PASS] OS         Windows 11 24H2 (build 26100, x64=True)
+[PASS] WEBVIEW2   156.0.4314.50 (registry)
+[PASS] VCRUNTIME  14.44.35211.0 (msvcp140 / vcruntime140 / vcruntime140_1)
+[PASS] BROWSER    Edge 156.0.4314.42; Chrome 156.0.8078.48
+[PASS] SESSION    local (Console)
+[PASS] INSTALLDIR not present (first install)
+[PASS] FREESPACE  C: 71.1 GB free
+
+VERDICT: READY
+```
+
+- 出现 `VERDICT: READY` → 继续。
+- 出现 `VERDICT: BLOCKED (n)` → 照 `[FAIL]` 下面那行 `->` 提示处理。**处理不了就把
+  `out\preflight.txt` 发回来**，不要硬着头皮往下跑，跑出来的数据也用不上。
+
+报告会自动存一份到 `out\preflight.txt`，最后一起发回来。
+
+### 每个检查项在查什么
+
+| 项 | 为什么要查 |
+|---|---|
+| `OS` | 需要 Windows 10 1809（build 17763）以上、64 位。低于这个版本 WebView2 和部分 API 行为不同 |
+| `WEBVIEW2` | 桌面壳的界面就是 WebView2 渲染的。缺了它安装器要联网下载，**离线机器装不上** |
+| `VCRUNTIME` | 引擎依赖 VC++ 2015-2022 运行时的三个 DLL，它们**不是 Windows 自带**。缺了引擎秒退（0xc0000135），界面只会显示「引擎离线」，跟真 bug 完全一样 |
+| `BROWSER` | 轨道 A 需要 Edge 或 Chrome 之一 |
+| `SESSION` | 远程桌面/向日葵/ToDesk 会话下浏览器退化成软件渲染，帧率数据不能用来判断代码好坏。是远程也别停，跑完标注一下就行 |
+| `INSTALLDIR` | 已经装过？那这轮就不是「干净机器首次安装」，解读要区分 |
+| `FREESPACE` | 安装约 60 MB；轨道 A 不需要空间 |
+
+---
+
+## 轨道 A：渲染与帧率（约 15 分钟，不装任何东西）
+
+1. 解压 `01-perf\crossmachine-pack-v1.zip`，得到一个 `crossmachine-pack-v1` 文件夹。
+2. 双击里面的 `perf.html`，用 **Chrome 或 Edge** 打开（别用 IE、别用微信内置浏览器）。
+3. 把窗口**拉大到占满屏幕**，别最小化、别被别的窗口盖住 —— 窗口不可见时浏览器会把帧率降到 1Hz，
+   测出来是 0。
+4. 页面顶部会显示识别到的渲染器。如果写的是 `SwiftShader` 或
+   `Microsoft Basic Render Driver`，说明这台机器在用 CPU 画图，**这份数据只能记录、不能当结论**，
+   页面会自己标成「环境受限」。
+5. 点「开始测量」，等约 10 秒。
+6. 跑完点「保存结果 JSON」，文件进「下载」目录。
+7. **再跑第二遍，发第二遍的。** 第一遍会带上磁盘冷启动和字体加载的额外开销。
+8. 采集机器环境（可选但强烈建议）：
+
+   ```powershell
+   cd 01-perf\crossmachine-pack-v1
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-env.ps1
+   ```
+
+   同样别双击。结果写到**那个文件夹里**的 `out\` 目录。**只读，不改任何设置。**
+
+跑之前记得：笔记本插电源、电源计划切「高性能」、关掉视频/直播/游戏、关掉「减少动态效果」。
+
+> `01-perf` 里那份 zip 里还有一份更详细的 `RUN.md`，专门讲怎么解读里面的三个场景
+> （S1 静态 / S2 纯滚动 / S3 边滚边更新）。这里不重复。
+
+---
+
+## 轨道 B：安装包与界面（约 25 分钟）
+
+这一轨会真的装软件。**装之前先记一句：现在「设置 → 应用」里有没有「BT 客户端」。**
+
+### B1 安装
+
+双击 `02-installer\BT-client_0.1.0_x64-setup.exe`。
+
+会先弹出 **SmartScreen**（「Windows 已保护你的电脑」）—— 这是**预期行为**，安装包没有代码签名。
+点「更多信息」→「仍要运行」。
+
+然后跟着向导走。**每个页面都截图**，边点边在 `CHECKLIST.md` 里记。具体看什么、记什么，
+`CHECKLIST.md` 的表格已经列好了，照着填就行。重点是我没见过这些页面：
+
+- 欢迎页长什么样、写的什么
+- 装到哪个目录（默认是不是 `C:\Users\<用户名>\AppData\Local\BT 客户端`）
+- 目录能不能改、改了会不会报错
+- 装的过程中有没有进度条
+- 完成页有没有「运行」勾选框、有没有创建快捷方式的选项
+
+### B2 装完先别启动，检查落地结果
+
+```powershell
+explorer "$env:LOCALAPPDATA\BT 客户端"
+```
+
+目录里应当**恰好是这 4 个文件**：
+
+```
+btclient-shell.exe   engine.exe   torrent-rasterbar.dll   uninstall.exe
+```
+
+多一个（比如 `src`、`package.json`）或少一个都是缺陷，记下来。
+如果 `preflight.ps1` 报过 `VCRUNTIME` 是 FAIL，这时候把 `plan-b-vcruntime\` 里那三个 DLL
+**复制到这个目录**（和 `engine.exe` 同一层），然后再启动。
+
+再去「设置 → 应用 → 已安装的应用」看有没有「BT 客户端 0.1.0」，记下它显示的大小和版本。
+顺便看开始菜单和桌面上有没有图标 —— 这一条我这边**从未验证过**，请如实记录有没有。
+
+### B3 启动
+
+从开始菜单（或安装目录里的 `btclient-shell.exe`）启动，**用手机秒表记一下从点击到列表区域
+出现内容的秒数**。
+
+看什么：
+
+- 顶部横幅有没有出现「正在连接引擎…」并停留很久（超过 5 秒不正常）
+- 底部 `seq` 数字是否在每秒递增（在涨 = 前端和引擎的通路是活的）
+- 空列表的提示文案、字体、行高、边距、滚动条外观 → 截图
+- 窗口能不能拖动、缩放、最大化
+- 关掉窗口，任务管理器里 `btclient-shell.exe` 和 `engine.exe` 是否都退出了
+  （壳会顺手关掉自己拉起的引擎）
+
+### B4（可选）看有数据的列表长什么样
+
+首次启动是空列表。想看带数据的样子，可以在应用**开着**的时候开后一个 PowerShell 窗口：
+
+```powershell
+$ep  = Get-Content "$env:APPDATA\com.btclient.desktop\engine.endpoint.json" -Raw | ConvertFrom-Json
+$hdr = @{ Authorization = "Bearer $($ep.token)" }
+$body = @{ magnet = 'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny' } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents" -Method Post -Headers $hdr -ContentType 'application/json' -Body $body
+```
+
+这是一部 CC 授权的公开影片，加进去**会真的开始下载**。界面是只读的（没有删除按钮），
+看完想删掉用：
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents/dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c?delete_files=1" -Method Delete -Headers $hdr
+```
+
+### B5 卸载
+
+「设置 → 应用」里点 `BT 客户端` → 卸载（或运行安装目录里的 `uninstall.exe`）。
+
+卸完检查两件事，方向相反：
+
+| 检查 | 期望 | 不符说明什么 |
+|---|---|---|
+| `%LOCALAPPDATA%\BT 客户端` | 目录被清空/删除 | 没删干净，残留程序文件 |
+| `%APPDATA%\com.btclient.desktop` | **保留** | 被一起删了 = 用户的任务记录被卸载器干掉了，这是数据丢失 |
+
+### B6 收尾：把日志拷回来
+
+```powershell
+explorer "$env:APPDATA\com.btclient.desktop"
+```
+
+把里面的 `shell.log` 拷出来。它记录了壳启动、引擎发现方式（spawn/reuse/respawn）、
+端口、以及前端首帧回报那一行 —— 这是「装完真能跑」最直接的证据。
+
+---
+
+## 第 2 步：回传什么
+
+| 文件 | 从哪来 | 说明 |
+|---|---|---|
+| `out\preflight.txt` | 自动生成 | 前置检查结论 |
+| `perf-*.json` | 轨道 A 保存按钮 | **发第二次的** |
+| `env-*.json` | 轨道 A 的 `collect-env.ps1` | 机器画像，配着帧率看 |
+| `shell.log` | `%APPDATA%\com.btclient.desktop\` | 轨道 B 的日志 |
+| `CHECKLIST.md` | 填好的 | 人工观察的全部内容 |
+| 截图 | 安装向导每页 + 界面 | 命名随意，按顺序编号最好 |
+
+**只要轨道 B 就把 shell.log + CHECKLIST + 截图发回来；只要轨道 A 就发两个 JSON。**
+
+---
+
+## 出问题了怎么记
+
+不需要分析，只要这五样：
+
+1. 卡在哪一步（第几步、哪个页面）
+2. 屏幕上写的原文（截图最好，**别用文字转述**）
+3. 任务管理器「详细信息」里有没有 `engine.exe` 和 `btclient-shell.exe` 在跑
+4. `shell.log` 最后 20 行
+5. `out\preflight.txt`
+
+有这五样基本能定位；少一样很可能要再麻烦你跑一遍。
+
+---
+
+## 这些「异常」是正常的，别当 bug
+
+| 现象 | 为什么 |
+|---|---|
+| SmartScreen 蓝色警告「未知发布者」 | 安装包没有代码签名，本轮刻意不做 |
+| 首次启动有几秒白屏 | 引擎冷启动 + 第一次读数据目录，2-4 秒属正常 |
+| 底部 `seq` 从 0 开始数 | 每次启动都重头计 |
+| 空列表 + 顶部「正在连接引擎…」一闪而过 | 前端先连上引擎再拿数据 |
+| 杀毒软件提示「未知程序」 | 同上，未签名 |
+| 卸载后安装目录还在，但里面空了 | 正常，程序文件删了、目录壳不一定删；只要 4 个文件都没了就算清干净 |
+
+---
+
+## 这个包不做什么
+
+- 不测下载速度、不测 DHT、不测网络。轨道 A 是纯前端渲染，不连任何服务器。
+- 不采集个人信息。`preflight.ps1` 只读系统版本号、几个 DLL 是否存在、浏览器版本，
+  不读文档、不上传、不写注册表。
+- 不改任何系统设置。
