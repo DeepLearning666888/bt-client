@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { useSyncExternalStore } from 'react'
+import { AddTaskDialog } from './components/AddTaskDialog'
 import { TorrentList } from './components/TorrentList'
 import type { EngineStore } from './store'
 
@@ -14,25 +16,57 @@ function formatRate(bytesPerSecond: number): string {
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
 }
 
-export function App({ store }: { store: EngineStore }) {
+export interface AppProps {
+  store: EngineStore
+  /** 不传就没有添加入口：探针与测试渲染列表时不需要它 */
+  onAddTask?: (magnet: string) => Promise<void>
+}
+
+export function App({ store, onAddTask }: AppProps) {
   const snapshot = useSyncExternalStore(store.subscribeSnapshot, store.getSnapshot)
   const connection = useSyncExternalStore(
     store.subscribeConnection,
     store.getConnection,
   )
+  const [adding, setAdding] = useState(false)
 
   const torrents = snapshot?.torrents ?? []
   const totalDown = torrents.reduce((sum, t) => sum + t.rateDown, 0)
   const totalUp = torrents.reduce((sum, t) => sum + t.rateUp, 0)
+  const canAdd = onAddTask !== undefined && connection.status !== 'offline'
+
+  // 添加成功后不等弹窗自己关：先关掉（列表会在下一个 100ms 轮询里出现新任务），
+  // 失败时 onSubmit 会把错误抛回对话框，那里才需要保持打开。
+  const submit = async (magnet: string): Promise<void> => {
+    if (onAddTask === undefined) return
+    await onAddTask(magnet)
+    setAdding(false)
+  }
 
   return (
     <div className="app">
       <header className="head">
         <h1>BT 下载器</h1>
-        <div className="head-stats">
-          <span>↓ {formatRate(totalDown)}</span>
-          <span>↑ {formatRate(totalUp)}</span>
-          <span>{snapshot?.count ?? 0} 个任务</span>
+        <div className="head-right">
+          {onAddTask !== undefined && (
+            <button
+              type="button"
+              className="btn-primary"
+              data-testid="add-open"
+              disabled={!canAdd}
+              title={canAdd ? '粘贴磁力链接添加任务' : '引擎离线，无法添加'}
+              onClick={() => {
+                setAdding(true)
+              }}
+            >
+              + 添加任务
+            </button>
+          )}
+          <div className="head-stats">
+            <span>↓ {formatRate(totalDown)}</span>
+            <span>↑ {formatRate(totalUp)}</span>
+            <span>{snapshot?.count ?? 0} 个任务</span>
+          </div>
         </div>
       </header>
 
@@ -52,6 +86,15 @@ export function App({ store }: { store: EngineStore }) {
         <span>seq {snapshot?.seq ?? 0}</span>
         <span>{snapshot?.degraded ? '数据不完整' : '数据完整'}</span>
       </footer>
+
+      {adding && onAddTask !== undefined && (
+        <AddTaskDialog
+          onCancel={() => {
+            setAdding(false)
+          }}
+          onSubmit={submit}
+        />
+      )}
     </div>
   )
 }

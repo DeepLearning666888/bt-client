@@ -158,6 +158,25 @@ cmd = "python toolchain/build.py desktop --build"
 ac = "AC-08"
 cmd = "python desktop/tests/t_engine_discovery.py"
 
+# 添加任务（M2d）。AC-09/AC-10 共用一条命令：校验与请求契约写在同一份单测里，
+# 拆成两条命令只会让「跑一次」变两次，判定结果完全一样。
+[[units.desktop.evidence]]
+ac = "AC-09"
+cmd = "python toolchain/build.py desktop --test add-task.test"
+
+[[units.desktop.evidence]]
+ac = "AC-10"
+cmd = "python toolchain/build.py desktop --test add-task.test"
+
+[[units.desktop.evidence]]
+ac = "AC-11"
+cmd = "python toolchain/build.py desktop --test add-task-ui"
+
+# 真引擎 + 真前端调用：前端 addTorrent() 发出的请求被引擎接受、任务出现在列表里
+[[units.desktop.evidence]]
+ac = "AC-12"
+cmd = "python desktop/tests/t_add_task_live.py"
+
 # ------------------------------------------------- 跨机测试包（P1 渲染与帧率）
 # 这是「界面不卡」从断言变成数据的那个单元。M2a 的四条性能约束全在 jsdom 里判定，
 # 而 jsdom 没有排版引擎与合成器 —— 它能证明「DOM 结构对」，不能证明「60fps」。

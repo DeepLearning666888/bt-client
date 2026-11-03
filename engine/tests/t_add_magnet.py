@@ -25,6 +25,12 @@ def main() -> None:
             c.check(isinstance(task["progress"], (int, float)), "progress 是数值")
             c.check_eq(task["infohash"], infohash, "/state 中的 infohash 一致")
         c.check_eq(engine.add_magnet(c.fake_magnet(infohash))[0], 409, "重复添加被拒为 409")
+        # 输入错误必须是 4xx：曾经这里落到 500，界面只能显示「引擎处理失败」，
+        # 把「你复制错了链接」说成「服务端故障」。
+        c.check_eq(
+            engine.add_magnet("magnet:?xt=urn:btih:not-a-hash")[0], 400,
+            "非法磁力被拒为 400",
+        )
     finally:
         engine.stop()
     c.finish()

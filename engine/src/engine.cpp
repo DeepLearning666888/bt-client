@@ -579,12 +579,15 @@ bool Engine::add_magnet(std::string const& uri, std::string& infohash, std::stri
             lt::add_torrent_params atp;
             lt::parse_magnet_uri(uri, atp, ec);
             if (ec) {
-                e = "磁力链接解析失败：" + ec.message();
+                // bad_input 前缀让 main.cpp 的 map_error 映射成 400。
+                // 曾经这里没有前缀，用户输错磁力会收到 500「引擎处理失败」，
+                // 把客户端输入问题伪装成服务端故障。
+                e = "bad_input: 磁力链接解析失败：" + ec.message();
                 return false;
             }
             std::string ih = hex_of(atp.info_hashes);
             if (!is_hex40(ih)) {
-                e = "磁力链接缺少有效的 btih";
+                e = "bad_input: 磁力链接缺少有效的 btih";
                 return false;
             }
             if (impl_->entries.count(ih)) {

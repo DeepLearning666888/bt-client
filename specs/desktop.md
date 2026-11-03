@@ -43,6 +43,20 @@ spawn 引擎并等发现文件出现。应用退出时调 `POST /shutdown` 让�
 换机器就找不到。包装器负责定位 `node.exe` 与 `npm-cli.js`（绕开 `npm.cmd` 对 cmd.exe 的
 隐含依赖），把路径不确定性收敛到一处 —— 与 engine 自带 MSVC 环境是同一套做法。
 
+**添加任务走引擎已有的 `POST /torrents`，界面只补入口。** 引擎从 M1b 起就支持
+「磁力 JSON」与「.torrent 二进制」两种 body，但界面上一直没有入口 —— 结果是软件装完
+打开就是空列表，用户无处可点。这一轮只补磁力那条（最常用），`.torrent` 文件选择与拖拽
+留给下一轮：两者都是「把字节交给引擎」，但前者只涉及输入校验，后者还要接文件对话框和
+拖拽事件，混在一起做会让这一轮的判据不干净。
+
+**输入校验、请求构造、错误文案三层分开。** 校验和文案是纯函数（`add-task.ts`），能直接
+单测边界；请求层只管把合法输入按契约发出去；对话框只负责显示错误和关闭自己。代价是
+多一个文件，收益是「复制时少一位哈希」这类问题能用 10 行单测锁死，不必靠点界面。
+
+**引擎侧顺手修了一个错误分类缺陷。** `parse_magnet_uri` 失败与「缺 btih」原来没有
+`bad_input:` 前缀，被 `map_error` 兜底成 500，界面只能显示「引擎处理失败」——
+把用户输错链接说成服务端故障。改成 400 后，界面能直接透传「磁力链接解析失败：…」。
+
 ## 验收标准
 
 - [AC-01] 依赖可从锁文件复现安装 | 判: `python toolchain/build.py desktop --install` 退出码 0，且 `desktop/package-lock.json` 存在
@@ -53,6 +67,10 @@ spawn 引擎并等发现文件出现。应用退出时调 `POST /shutdown` 让�
 - [AC-06] 真实引擎对接：起 `engine.exe` 后 UI 数据层能拉到并渲染任务名 | 判: `python desktop/tests/t_live_engine.py` 退出码 0（本机回环，零外网依赖）
 - [AC-07] 生产构建产出静态资源 | 判: `python toolchain/build.py desktop --build` 退出码 0，且 `desktop/dist/index.html` 存在
 - [AC-08] 引擎发现逻辑：无实例时拉起、已有实例时复用、残留过期端点时不误连 | 判: `python desktop/tests/t_engine_discovery.py` 退出码 0，三种情形各断言一次
+- [AC-09] 磁力输入校验与错误文案是纯函数，边界可单测 | 判: `python toolchain/build.py desktop --test add-task.test` 退出码 0，覆盖空串/纯空白、缺 `magnet:?` 前缀、`http(s)` 下载地址、缺 btih、btih 长度不对、32 位 base32、40 位 hex、大小写混合八类输入，并覆盖 400/401/409/5xx/未知状态码五类错误文案
+- [AC-10] 添加请求的契约固定：`POST <base>/torrents` + Bearer 令牌 + JSON body | 判: 同上命令，用 stub fetch 断言 URL、method、`Authorization: Bearer <token>`、`Content-Type: application/json`、body 为 `{"magnet":"…"}`；非 2xx 抛带中文文案的 Error、缺 infohash 抛错、连不上引擎与超时各有独立文案
+- [AC-11] 对话框交互：非法输入不发起请求，成功即关闭，失败留窗并显示原因 | 判: `python toolchain/build.py desktop --test add-task-ui` 退出码 0，断言四种情形各一次
+- [AC-12] 真实引擎端到端：界面的添加动作能让任务出现在列表里 | 判: `python desktop/tests/t_add_task_live.py` 退出码 0（起真引擎 → 前端 `addTorrent()` 发磁力 → 断言返回 infohash 与输入一致 → 轮询 `/state` → 渲染 `App` 断言该任务出现在列表且状态为「获取元数据中」→ 重复添加给出「已经在列表」文案 → 清理并停引擎）
 
 ## 实现期偏离（与批准版本的差异）
 
@@ -87,6 +105,16 @@ spawn 引擎并等发现文件出现。应用退出时调 `POST /shutdown` 让�
 - 不做自动更新。
 
 ## 未验证
+
+- **添加任务只做了磁力，`.torrent` 文件与拖拽未做。** 引擎的 `POST /torrents` 已支持
+  `application/octet-stream`（`t_live_engine.py` 就在用），缺的是文件选择对话框与拖拽事件。
+  未做的原因写在关键设计决策里：混进来会让这一轮的判据不干净。
+- **添加后不校验「任务真的开始下载」。** AC-12 断言的是「请求被接受、任务出现在列表里」，
+  不是「种子能下动」——后者依赖外网与做种情况，属于 `engine/tests/real_swarm.py` 的范围。
+  这条边界是刻意的：把外网依赖塞进卡点，卡点就从证据退化成抽奖。
+- **添加对话框在真实壳（WebView2）里的观感未验证。** jsdom 只证明交互与文案，不证明
+  焦点、遮罩层、长链接换行在 WebView2 里长得对。需要在装好的客户端上肉眼过一次。
+
 
 - **Tauri 壳与打包完全未做。** 本轮只交付 M2a（React 数据层 + 列表 UI）。sidecar 拉起、
   读取端点文件、进程退出事件都还没在 Tauri 环境里跑过；`launcher.py` 的三情形判断有
