@@ -39,6 +39,9 @@ export interface TorrentListProps {
   actions?: TorrentActions
   /** 动作失败时往上抛一句人话，由上层决定显示在哪 */
   onActionError?: (message: string) => void
+  /** 数据已停止更新（引擎离线）。速率属于瞬时量，此时不再显示数字；
+   * 动作按钮禁用 —— 点了必然失败，那就别让人点。 */
+  stale?: boolean
 }
 
 function formatRate(bytesPerSecond: number): string {
@@ -63,11 +66,20 @@ interface RowProps {
   /** 没注入 actions 时不渲染按钮：探针渲染 1000 行时多两个按钮会污染性能基线 */
   withActions: boolean
   busy: boolean
+  stale: boolean
   onToggle: (torrent: Torrent, action: 'pause' | 'resume') => void
   onAskRemove: (torrent: Torrent) => void
 }
 
-function TorrentRow({ torrent, height, withActions, busy, onToggle, onAskRemove }: RowProps) {
+function TorrentRow({
+  torrent,
+  height,
+  withActions,
+  busy,
+  stale,
+  onToggle,
+  onAskRemove,
+}: RowProps) {
   const action = rowActionFor(torrent.state, torrent.paused)
   return (
     <div className="row" data-testid="torrent-row" style={{ height }}>
@@ -81,15 +93,15 @@ function TorrentRow({ torrent, height, withActions, busy, onToggle, onAskRemove 
         </span>
       </div>
       <div className="row-side">
-        <span className="row-rate">↓ {formatRate(torrent.rateDown)}</span>
-        <span className="row-rate">↑ {formatRate(torrent.rateUp)}</span>
+        <span className="row-rate">↓ {stale ? '—' : formatRate(torrent.rateDown)}</span>
+        <span className="row-rate">↑ {stale ? '—' : formatRate(torrent.rateUp)}</span>
         {withActions && action !== null && (
           <button
             type="button"
             className="row-btn"
             data-testid={`row-${action}`}
-            disabled={busy}
-            title={action === 'pause' ? '暂停这个任务' : '继续下载'}
+            disabled={busy || stale}
+            title={stale ? '引擎离线，暂时不能操作' : action === 'pause' ? '暂停这个任务' : '继续下载'}
             onClick={(event) => {
               event.stopPropagation()
               onToggle(torrent, action)
@@ -103,7 +115,7 @@ function TorrentRow({ torrent, height, withActions, busy, onToggle, onAskRemove 
             type="button"
             className="row-btn row-btn-danger"
             data-testid="row-remove"
-            disabled={busy}
+            disabled={busy || stale}
             title="从列表移除"
             onClick={(event) => {
               event.stopPropagation()
@@ -130,6 +142,7 @@ export function TorrentList({
   onScrollTopChange,
   actions,
   onActionError,
+  stale = false,
 }: TorrentListProps) {
   const [innerScrollTop, setInnerScrollTop] = useState(0)
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
@@ -192,7 +205,12 @@ export function TorrentList({
 
   return (
     <>
-      <div className="list" style={{ height: viewportHeight }} onScroll={handleScroll}>
+      <div
+        className="list"
+        data-stale={stale ? '1' : '0'}
+        style={{ height: viewportHeight }}
+        onScroll={handleScroll}
+      >
         <div className="list-spacer" style={{ height: total * rowHeight }}>
           <div
             className="list-window"
@@ -205,6 +223,7 @@ export function TorrentList({
                 height={rowHeight}
                 withActions={actions !== undefined}
                 busy={busy.has(torrent.infohash)}
+                stale={stale}
                 onToggle={toggle}
                 onAskRemove={(target) => {
                   setConfirming(target)

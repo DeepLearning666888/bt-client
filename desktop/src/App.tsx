@@ -42,6 +42,12 @@ export function App({ store, onAddTask, onAddFileTask, onRowActions }: AppProps)
   const totalUp = torrents.reduce((sum, t) => sum + t.rateUp, 0)
   const canAdd = onAddTask !== undefined && connection.status !== 'offline'
 
+  // 速率是瞬时量：引擎不在时这个数字必然已经不成立，继续显示就是在说谎。
+  // 任务数则是「最后已知状态」，还有价值 —— 所以保留数字，但标出它不新鲜了。
+  // 两者处理不同，理由不同，别合并成一个 online 开关。
+  const offline = connection.status === 'offline'
+  const rateText = (rate: number): string => (offline ? '—' : formatRate(rate))
+
   // 添加成功后不等弹窗自己关：先关掉（列表会在下一个 100ms 轮询里出现新任务），
   // 失败时 onSubmit 会把错误抛回对话框，那里才需要保持打开。
   const submit = async (magnet: string): Promise<void> => {
@@ -118,10 +124,12 @@ export function App({ store, onAddTask, onAddFileTask, onRowActions }: AppProps)
               + 添加任务
             </button>
           )}
-          <div className="head-stats">
-            <span>↓ {formatRate(totalDown)}</span>
-            <span>↑ {formatRate(totalUp)}</span>
-            <span>{snapshot?.count ?? 0} 个任务</span>
+          <div className="head-stats" data-testid="head-stats">
+            <span>↓ {rateText(totalDown)}</span>
+            <span>↑ {rateText(totalUp)}</span>
+            <span>
+              {snapshot?.count ?? 0} 个任务{offline ? '（离线）' : ''}
+            </span>
           </div>
         </div>
       </header>
@@ -156,6 +164,7 @@ export function App({ store, onAddTask, onAddFileTask, onRowActions }: AppProps)
       <TorrentList
         torrents={torrents}
         actions={onRowActions}
+        stale={offline}
         onActionError={(message) => {
           setActionError(message)
         }}

@@ -163,6 +163,14 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 离线时整份列表是「最后已知画面」：不搬走数据，但要让人一眼看出它停住了。
+   只降透明度不走动画 —— 这是状态，不是过渡。 */
+.list[data-stale='1'] .row-meta,
+.list[data-stale='1'] .row-rate,
+.list[data-stale='1'] .row-name {
+  opacity: 0.55;
+}
+
 .row-side {
   display: flex;
   align-items: center;
