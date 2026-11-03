@@ -9,7 +9,7 @@
 
 import { addTorrent, addTorrentFile, type TorrentBytes } from './add-task'
 import { authHeaders, portOf, stateUrl, type EngineConfig } from './config'
-import { Poller, type SnapshotSource } from './poller'
+import { Poller, STATE_TIMEOUT_MS, type SnapshotSource } from './poller'
 import { notifyShellReady } from './shell-bridge'
 import { EngineStore } from './store'
 import { pauseTorrent, removeTorrent, resumeTorrent } from './torrent-action'
@@ -35,6 +35,11 @@ export interface RuntimeOptions {
    * 触发的话，断言的时机永远在跟操作系统赛跑。
    */
   source?: SnapshotSource
+  /** 单次轮询的超时。默认 `STATE_TIMEOUT_MS`；测试调小以免每条都等 3 秒。 */
+  timeoutMs?: number
+  /** 是否立刻开始定时轮询。默认 true；需要手动控制每一拍时关掉（否则定时器会
+   *  先占住 inflight，让手动 tick 被静默跳过）。 */
+  startPolling?: boolean
 }
 
 export function createEngineRuntime(
@@ -54,9 +59,10 @@ export function createEngineRuntime(
 
   const source: SnapshotSource =
     options.source ??
-    (async (since) => {
+    (async (since, signal) => {
       const response = await fetch(stateUrl(config, since), {
         headers: authHeaders(config),
+        signal,
       })
       if (!response.ok) {
         throw new Error(`/state 返回 ${response.status}`)
@@ -81,8 +87,10 @@ export function createEngineRuntime(
     (error) => {
       store.markOffline(error instanceof Error ? error.message : String(error))
     },
+    100,
+    options.timeoutMs ?? STATE_TIMEOUT_MS,
   )
-  poller.start()
+  if (options.startPolling !== false) poller.start()
   store.markConnecting()
 
   const addTask = async (magnet: string): Promise<void> => {

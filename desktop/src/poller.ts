@@ -8,7 +8,19 @@
 
 import { parseSnapshot, type Snapshot } from './api'
 
-export type SnapshotSource = (since: number) => Promise<unknown>
+export type SnapshotSource = (since: number, signal?: AbortSignal) => Promise<unknown>
+
+/** 单次轮询的等待上限。
+ *
+ * 引擎在本机回环，正常是毫秒级。这个值只兜一种情况：**进程还在、但不响应**
+ * （假死、被调试器挂住、在做超长阻塞操作）。没有它的话，那一拍会永远挂着，
+ * `inflight` 永不释放 —— 之后每一拍都在 `if (this.inflight) return` 处被丢掉，
+ * 界面永远停在最后一份快照上，还显示「在线」。那比显示离线更坏。
+ *
+ * 比「添加任务」的 15s 短：轮询是高频动作，卡 3 秒已经丢掉 30 拍，
+ * 再等下去没有意义。
+ */
+export const STATE_TIMEOUT_MS = 3000
 
 export function isUnchangedResponse(raw: unknown): boolean {
   return (
@@ -37,6 +49,7 @@ export class Poller {
     private readonly onSnapshot: (snapshot: Snapshot) => void,
     private readonly onError: (error: unknown) => void = () => {},
     private readonly intervalMs = 100,
+    private readonly timeoutMs = STATE_TIMEOUT_MS,
   ) {}
 
   /** 单次轮询。刻意做成公开方法：定时器不该是测试的前提。 */
@@ -44,9 +57,32 @@ export class Poller {
     // 上一次还没回来就跳过这一拍，避免请求堆积把引擎打满
     if (this.inflight || this.stopped) return
     this.inflight = true
+    // 超时用 abort 而不是只 race：race 只是「我不等了」，底层请求还占着连接，
+    // 引擎真死时会攒下一堆挂着的 socket。
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    // 文案由这个标志决定，而不是由 race 收到哪个 reject 决定。
+    // abort() 会同步触发 source 自身的 reject（fetch 抛 AbortError），
+    // 它比我们自己的超时 reject 更早到达 race —— 直接透传的话，用户看到的是
+    // 一句英文技术错误，而不是「等待引擎响应超时」。
+    let timedOut = false
     try {
       this.stats.ticks += 1
-      const raw = await this.source(this.lastSeq)
+
+      const request = this.source(this.lastSeq, controller.signal)
+      const raw =
+        this.timeoutMs > 0
+          ? await Promise.race([
+              request,
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(() => {
+                  timedOut = true
+                  controller.abort()
+                  reject(new Error('等待引擎响应超时'))
+                }, this.timeoutMs)
+              }),
+            ])
+          : await request
 
       if (isUnchangedResponse(raw)) {
         this.stats.unchanged += 1
@@ -65,8 +101,11 @@ export class Poller {
       this.onSnapshot(snapshot)
     } catch (error) {
       this.stats.failures += 1
-      this.onError(error)
+      this.onError(timedOut ? new Error('等待引擎响应超时') : error)
     } finally {
+      // 不 clearTimeout 的话，成功返回后定时器还会在未来某一刻触发一次 abort，
+      // 而那时 controller 已经用不上了 —— 是一个纯粹的泄漏（也是测试里的 open handle）。
+      if (timer !== null) clearTimeout(timer)
       this.inflight = false
     }
   }

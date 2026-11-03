@@ -120,3 +120,77 @@ describe('Poller 去重', () => {
     expect(poller.stats.ticks).toBe(1)
   })
 })
+
+describe('Poller 超时（引擎假死）', () => {
+  /** 永不 resolve 的 source：模拟「进程还在、但永远不回响应」。
+   *  这是杀进程测不出来的形态 —— 端口开着，连接建得上，就是没有数据。 */
+  function hung(): (since: number, signal?: AbortSignal) => Promise<unknown> {
+    return (_since, signal) =>
+      new Promise<unknown>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => {
+          reject(new Error('aborted'))
+        })
+      })
+  }
+
+  it('超时后把错误交给 onError，不是无声挂住', async () => {
+    const errors: unknown[] = []
+    const poller = new Poller(hung(), () => {}, (error) => errors.push(error), 100, 30)
+
+    await poller.tick()
+
+    expect(errors).toHaveLength(1)
+    expect((errors[0] as Error).message).toBe('等待引擎响应超时')
+    expect(poller.stats.failures).toBe(1)
+  })
+
+  it('超时之后 inflight 被释放，下一拍照常发起', async () => {
+    // 这条是真正的病灶：没有超时时那一拍永远不结束，inflight 永远为 true，
+    // 之后每一拍都被 `if (this.inflight) return` 丢掉 —— 界面永久冻结在
+    // 最后一份快照上，且仍显示「在线」。比显示离线更坏。
+    let calls = 0
+    const poller = new Poller(
+      (since, signal) => {
+        calls += 1
+        if (calls > 1) return Promise.resolve({ seq: 9, torrent_count: 0, torrents: [] })
+        return hung()(since, signal)
+      },
+      () => {},
+      () => {},
+      100,
+      30,
+    )
+
+    await poller.tick()
+    expect(calls).toBe(1)
+
+    await poller.tick()
+    expect(calls).toBe(2)
+    expect(poller.stats.applied).toBe(1)
+  })
+
+  it('超时会 abort 底层请求，不是只丢下它继续跑', async () => {
+    let aborted = false
+    const poller = new Poller(
+      (_since, signal) => {
+        signal?.addEventListener('abort', () => {
+          aborted = true
+        })
+        return new Promise<unknown>(() => {})
+      },
+      () => {},
+      () => {},
+      100,
+      30,
+    )
+
+    await poller.tick()
+    expect(aborted).toBe(true)
+  })
+
+  it('timeoutMs <= 0 时不设超时（保持旧行为，留给不需要它的调用方）', async () => {
+    const poller = new Poller(async () => ({ seq: 1, unchanged: true }), () => {}, () => {}, 100, 0)
+    await poller.tick()
+    expect(poller.stats.unchanged).toBe(1)
+  })
+})

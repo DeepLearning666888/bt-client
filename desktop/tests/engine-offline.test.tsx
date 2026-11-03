@@ -154,6 +154,65 @@ describe('引擎失效后的界面', () => {
     harness.runtime.dispose()
   })
 
+  it('引擎假死（进程在但不响应）也会转离线，不会永远显示在线', async () => {
+    // 与「进程被杀」不同的失效形态：端口开着、连接建得上、就是没有数据。
+    // 没有超时的话那一拍永远不结束，inflight 永不释放，之后每一拍都被丢掉 ——
+    // 界面永久冻结在最后一份快照上，还写着「在线」。这比显示离线更骗人。
+    let hung = true
+    const runtime = createEngineRuntime(
+      { baseUrl: 'http://127.0.0.1:1', token: 't' },
+      {
+        timeoutMs: 40,
+        source: async () => {
+          if (hung) return new Promise<unknown>(() => {})
+          return SNAPSHOT
+        },
+      },
+    )
+    render(<App store={runtime.store} onAddTask={async () => {}} />)
+
+    await act(async () => {
+      await runtime.poller?.tick()
+    })
+
+    const banner = await screen.findByText(/引擎离线/)
+    expect(banner.textContent).toContain('超时')
+    // 英文技术错误（AbortError）不该出现在这里
+    expect(banner.textContent).not.toMatch(/abort/i)
+    runtime.dispose()
+  })
+
+  it('假死恢复后下一拍照常发起（inflight 没被锁死）', async () => {
+    let hung = true
+    const runtime = createEngineRuntime(
+      { baseUrl: 'http://127.0.0.1:1', token: 't' },
+      {
+        timeoutMs: 40,
+        source: async () => {
+          if (hung) return new Promise<unknown>(() => {})
+          return SNAPSHOT
+        },
+      },
+    )
+    render(<App store={runtime.store} onAddTask={async () => {}} />)
+
+    await act(async () => {
+      await runtime.poller?.tick()
+    })
+    expect(screen.getByText(/引擎离线/)).toBeTruthy()
+
+    await act(async () => {
+      hung = false
+      await runtime.poller?.tick()
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText(/引擎离线/)).toBeNull()
+    })
+    expect(screen.getByText('1 个任务')).toBeTruthy()
+    runtime.dispose()
+  })
+
   it('引擎回来后自动恢复，不需要用户重开窗口', async () => {
     const harness = mountLive()
     await waitFor(() => {

@@ -224,6 +224,29 @@ cmd = "python toolchain/build.py desktop --test drag-drop.test"
 ac = "AC-22"
 cmd = "python toolchain/build.py desktop --test drag-drop-ui"
 
+# 引擎失联后的表现。AC-23 锁显示规则（可失效数据源，失败时点可控）；
+# AC-24 真杀 engine.exe，证明真实链路会走到离线分支 —— stub 只能模拟
+# 「fetch 抛错」，模拟不了「进程没了、端口没人接」。
+[[units.desktop.evidence]]
+ac = "AC-23"
+cmd = "python toolchain/build.py desktop --test engine-offline"
+
+[[units.desktop.evidence]]
+ac = "AC-24"
+cmd = "python desktop/tests/t_engine_crash.py"
+
+# 轮询超时。AC-04 也跑这个文件（验去重），AC-25 验的是新增的四条超时用例：
+# 没有超时的话「引擎假死」会让 inflight 永不释放，界面永久冻结在在线态。
+[[units.desktop.evidence]]
+ac = "AC-25"
+cmd = "python toolchain/build.py desktop --test poller"
+
+# 真实假死：裸 TCP 收下连接不回数据。用默认 fetch source（不是桩），
+# 验的是「AbortSignal 能不能真的取消一个真实的 undici 请求」+ 墙钟耗时对不对。
+[[units.desktop.evidence]]
+ac = "AC-26"
+cmd = "python desktop/tests/t_engine_hang.py"
+
 # ------------------------------------------------- 跨机测试包（P1 渲染与帧率）
 # 这是「界面不卡」从断言变成数据的那个单元。M2a 的四条性能约束全在 jsdom 里判定，
 # 而 jsdom 没有排版引擎与合成器 —— 它能证明「DOM 结构对」，不能证明「60fps」。
