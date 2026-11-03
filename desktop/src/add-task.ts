@@ -66,9 +66,7 @@ export function describeAddFailure(status: number, body: unknown): string {
 
 export interface AddOutcome {
   infohash: string
-}
-
-/** 超时上限。引擎在本机回环，正常是毫秒级；15s 只用来兜「引擎没响应但端口没关」。 */
+}/** 超时上限。引擎在本机回环，正常是毫秒级；15s 只用来兜「引擎没响应但端口没关」。 */
 const ADD_TIMEOUT_MS = 15_000
 
 export async function addTorrent(
@@ -99,6 +97,130 @@ export async function addTorrent(
   }
 
   // 错误响应体不一定是 JSON（502 之类可能是 HTML），解析失败不该盖掉更有用的文案
+  const body: unknown = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(describeAddFailure(response.status, body))
+
+  const infohash = typeof body === 'object' && body !== null
+    ? (body as Record<string, unknown>)['infohash']
+    : undefined
+  if (typeof infohash !== 'string' || infohash === '') {
+    throw new Error('引擎没有返回 infohash，任务状态未知')
+  }
+  return { infohash }
+}
+
+/* ------------------------------ .torrent 文件 ------------------------------ */
+
+/** 引擎 HTTP 层的请求体上限（`engine/src/http.cpp:321`，超了直接 413 且不进解析）。
+ * 两边改动必须同步；前端先拦是为了给出带数值的文案。 */
+export const TORRENT_MAX_BYTES = 8 * 1024 * 1024
+
+/** 只依赖 name / size，所以 `File` 和测试里的假对象都能传。 */
+export interface FileLike {
+  name: string
+  size: number
+}
+
+export type FileVerdict = { ok: true } | { ok: false; message: string }
+
+function formatMiB(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+}
+
+/** 发送前的同步校验：扩展名、空文件、上限。
+ *
+ * 刻意**不**校验内容 —— 那要读字节，得异步；而且真正的解析器在引擎里，
+ * 它给的原话比我猜的准。这里只拦「不用打开就知道不行」的三类。 */
+export function validateTorrentFile(file: FileLike): FileVerdict {
+  if (!file.name.toLowerCase().endsWith('.torrent')) {
+    return { ok: false, message: `这不是 .torrent 文件（${file.name}）` }
+  }
+  if (file.size === 0) {
+    return { ok: false, message: '文件是空的（0 字节）' }
+  }
+  if (file.size > TORRENT_MAX_BYTES) {
+    return {
+      ok: false,
+      message: `文件 ${formatMiB(file.size)}，超过 ${formatMiB(TORRENT_MAX_BYTES)} 上限`,
+    }
+  }
+  return { ok: true }
+}
+
+/** 种子文件是 bencode 字典，首字节必须是 `d`。
+ *
+ * 容忍前导空白与 UTF-8 BOM：有些客户端导出的文件带 BOM，
+ * 引擎那边能解析，这里不该提前拦。改过后缀的 zip / 文本在这里被拦下。 */
+export function looksLikeTorrent(bytes: Uint8Array): boolean {
+  let i = 0
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    i = 3
+  }
+  while (i < bytes.length) {
+    const b = bytes[i]
+    if (b !== 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d) break
+    i += 1
+  }
+  return i < bytes.length && bytes[i] === 0x64 // 'd'
+}
+
+/** 校验 + 读字节的合成步骤。放在这里而不是组件里：读文件是异步的，
+ * 放在组件里会让「什么算合法」散成 setState 序列，测试只能靠点界面。 */
+export interface FileBytes {
+  name: string
+  size: number
+  arrayBuffer(): Promise<ArrayBuffer>
+}
+
+// 用 Uint8Array<ArrayBuffer> 而不是裸 Uint8Array：后者默认 ArrayBufferLike，
+// 含 SharedArrayBuffer 的可能，fetch 的 BodyInit 不接受。
+export type TorrentBytes = Uint8Array<ArrayBuffer>
+
+export type PreparedFile =
+  | { ok: true; bytes: TorrentBytes; name: string }
+  | { ok: false; message: string }
+
+export async function prepareTorrentFile(file: FileBytes): Promise<PreparedFile> {
+  const verdict = validateTorrentFile(file)
+  if (!verdict.ok) return verdict
+
+  const buffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  if (bytes.length === 0) return { ok: false, message: '文件是空的（0 字节）' }
+  if (!looksLikeTorrent(bytes)) {
+    return { ok: false, message: '这个文件不像种子（内容开头不是种子格式），可能只是改了后缀名' }
+  }
+  return { ok: true, bytes, name: file.name }
+}
+
+/** 文件模式的上传。与磁力模式的差别只有 content-type 和 body 形状，其余共用。 */
+export async function addTorrentFile(
+  config: EngineConfig,
+  bytes: TorrentBytes,
+  timeoutMs = ADD_TIMEOUT_MS,
+): Promise<AddOutcome> {
+  if (bytes.length === 0) throw new Error('文件是空的（0 字节）')
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    controller.abort()
+  }, timeoutMs)
+
+  let response: Response
+  try {
+    response = await fetch(`${config.baseUrl}/torrents`, {
+      method: 'POST',
+      headers: { ...authHeaders(config), 'Content-Type': 'application/octet-stream' },
+      body: bytes,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === 'AbortError'
+    throw new Error(aborted ? '等待引擎响应超时' : '连不上引擎，本地引擎可能没在运行')
+  } finally {
+    clearTimeout(timer)
+  }
+
   const body: unknown = await response.json().catch(() => null)
   if (!response.ok) throw new Error(describeAddFailure(response.status, body))
 

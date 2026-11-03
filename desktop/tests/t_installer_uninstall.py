@@ -66,6 +66,9 @@ def main() -> int:
         print(f"  临时数据：{data_before[0]} 个文件 / {data_before[1]} 字节")
 
         print("\n② 静默卸载")
+        # 先确认句柄都放掉了：卸载器遇到被占用的文件会跳过并照样返回 0，
+        # 那会让「卸载功能坏了」和「进程还没退干净」看起来一模一样
+        common.wait_files_released(install)
         code = common.run_uninstall(install)
         print(f"  卸载器退出码 {code}")
 

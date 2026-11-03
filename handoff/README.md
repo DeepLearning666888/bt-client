@@ -218,30 +218,41 @@ btclient-shell.exe   engine.exe   torrent-rasterbar.dll   uninstall.exe
 - 关掉窗口，任务管理器里 `btclient-shell.exe` 和 `engine.exe` 是否都退出了
   （壳会顺手关掉自己拉起的引擎）
 
-### B4（可选）看有数据的列表长什么样
+### B4 添加一个任务，看它动起来
 
-首次启动是空列表。想看带数据的样子，可以在应用**开着**的时候开后一个 PowerShell 窗口：
+点右上角的「**+ 添加任务**」，弹窗里有两个页签：
+
+- **磁力链接**：粘下面这条，回车
+- **种子文件**：点「选择文件」，挑一个 `.torrent`（最大 8 MiB）
+
+```
+magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny
+```
+
+这是一部 CC 授权的公开影片，加进去**会真的开始下载**，占几十 MB 磁盘。
+
+看什么：
+
+- 列表里是否出现一行，状态写「获取元数据中」，几十秒到几分钟后变成「下载中」或「做种中」
+- **再粘一次同样的磁力** → 应该直接说「这个任务已经在列表里了」，而不是卡住或报一串英文
+- 粘一段不是磁力的文字（比如 `https://example.com/a.torrent`）→ 应该说「这是网页地址，暂时只支持 magnet: 开头的磁力链接」
+- 如果状态显示成英文 `unknown`，同时顶部多出一条黄色的「部分字段无法解析，已按安全值降级显示」——
+  你装的是首版安装包，不是这一份。这是判断新旧版**最直接**的办法，比看版本号可靠。
+
+删任务：界面还没有删除按钮（下一版才做）。用 PowerShell：
 
 ```powershell
 $ep  = Get-Content "$env:APPDATA\com.btclient.desktop\engine\engine.endpoint.json" -Raw | ConvertFrom-Json
 $hdr = @{ Authorization = "Bearer $($ep.token)" }
-$body = @{ magnet = 'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny' } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents" -Method Post -Headers $hdr -ContentType 'application/json' -Body $body
-```
-
-这是一部 CC 授权的公开影片，加进去**会真的开始下载**。界面是只读的（没有删除按钮），
-看完想删掉用：
-
-```powershell
 Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents/dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c?delete_files=1" -Method Delete -Headers $hdr
 ```
 
-**加完之后界面上该看到什么**：列表里出现一行，状态写「获取元数据中」，几十秒到几分钟后变成
-「下载中」或「做种中」。
+如果按钮点了没反应，用下面这段直接喂引擎，能把「界面坏了」和「引擎坏了」分开：
 
-如果状态显示成英文 `unknown`，同时顶部多出一条黄色的「部分字段无法解析，已按安全值降级显示」——
-说明你装的是首版安装包（0.1.0 首版有状态词表对齐缺陷，已在本包里修掉）。这是判断新旧版
-**最直接**的办法，比看版本号可靠。
+```powershell
+$body = @{ magnet = 'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny' } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents" -Method Post -Headers $hdr -ContentType 'application/json' -Body $body
+```
 
 **顺序：先卸载旧版，再装本包里这份。** 覆盖安装这条路没验证过，不要走。
 

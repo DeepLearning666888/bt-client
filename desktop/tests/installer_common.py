@@ -186,6 +186,36 @@ def stop(proc: subprocess.Popen[bytes], timeout: float = 15.0) -> None:
         proc.kill()
 
 
+def wait_files_released(install: Path, timeout: float = 20.0) -> bool:
+    """等安装目录里的 exe / dll 句柄全部释放。
+
+    `taskkill /F /T` 返回不代表句柄已释放：libtorrent 析构、DLL 卸载要几十到几百毫秒。
+    这段时间里卸载器遇到被占用的文件会**跳过并仍然返回 0**，
+    现场表现就是「卸载成功，但目录里还剩 exe 和 dll」—— 排查时会误判成卸载器坏了。
+    实测抓到过一次：连着跑完引擎单元测试后立刻卸载，残留 3 个文件、退出码 0，
+    单独重跑又全绿。这个等待把「句柄未释放」这种测试自污染挡掉；
+    真要是 20 秒还占着，那就不是速度问题，日志会把文件名打出来。
+    """
+    deadline = time.time() + timeout
+    busy: list[str] = []
+    while time.time() < deadline:
+        busy = []
+        for path in install.glob("*"):
+            if not path.is_file() or path.suffix.lower() not in (".exe", ".dll"):
+                continue
+            try:
+                # rb+ 要独占写权限：被占用时 Windows 直接抛 PermissionError
+                with path.open("rb+"):
+                    pass
+            except OSError:
+                busy.append(path.name)
+        if not busy:
+            return True
+        time.sleep(0.25)
+    print(f"  ! 卸载前这些文件仍被占用：{sorted(busy)}")
+    return False
+
+
 def cleanup(path: Path) -> None:
     """删临时工作区。Windows 上文件句柄可能还没释放，重试几次。"""
     for _ in range(5):

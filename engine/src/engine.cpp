@@ -614,7 +614,8 @@ bool Engine::add_magnet(std::string const& uri, std::string& infohash, std::stri
 bool Engine::add_torrent_bytes(std::string const& bytes, std::string& infohash,
                                std::string& err) {
     if (bytes.empty()) {
-        err = "种子文件为空";
+        // bad_input 前缀让 map_error 映射成 400：空文件是调用方的问题，不是引擎故障。
+        err = "bad_input: 种子文件为空";
         return false;
     }
     return impl_->run_sync(
@@ -635,13 +636,14 @@ bool Engine::add_torrent_bytes(std::string const& bytes, std::string& infohash,
             std::error_code rm;
             fs::remove(tmp, rm);
             if (ec) {
-                e = "种子文件解析失败：" + ec.message();
+                // 同 add_magnet：解析失败属于用户给的字节不对，必须是 400 而非 500
+                e = "bad_input: 种子文件解析失败：" + ec.message();
                 return false;
             }
 
             std::string ih = hex_of(ti->info_hashes());
             if (!is_hex40(ih)) {
-                e = "无法从种子文件计算 infohash";
+                e = "bad_input: 无法从种子文件计算 infohash";
                 return false;
             }
             if (impl_->entries.count(ih)) {

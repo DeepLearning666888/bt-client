@@ -57,6 +57,24 @@ spawn 引擎并等发现文件出现。应用退出时调 `POST /shutdown` 让�
 `bad_input:` 前缀，被 `map_error` 兜底成 500，界面只能显示「引擎处理失败」——
 把用户输错链接说成服务端故障。改成 400 后，界面能直接透传「磁力链接解析失败：…」。
 
+**`.torrent` 文件与磁力是两条独立的入口，不是一个入口的两种输入。** 两者的请求体
+根本不同（JSON `{"magnet":"…"}` vs `application/octet-stream` 原始字节），校验规则
+也完全不同（磁力查 `btih` 语法，文件查大小上限与 bencode 首字节）。硬塞进一个
+`if` 里会让 ACL 变成「这条判据到底在验哪个」说不清，所以拆成 `addTorrent()` 与
+`addTorrentFile()` 两个函数、两条 AC。共用的是错误映射（`describeAddFailure`），
+因为引擎的状态码语义对两者一致。
+
+**发送前拦截，而不是让引擎回 413。** 引擎的 HTTP 层上限是 8 MiB（`http.cpp:321`），
+超了直接 413 且不会进入 `add_torrent_bytes`。前端在 `File` 对象上就能读到 `size`，
+先拦下来给「这个种子文件 9.2 MiB，超过 8 MiB 上限」这种带数值的文案，比让用户
+看着「请求体超过 8 MiB」猜自己哪个文件超了要有用。上限常量与引擎对齐并写进注释，
+两边改动时必须同步。
+
+**文件模式复用同一个对话框，用 Tab 切换。** 不新开窗口的理由：用户的心智模型是
+「添加任务」，不是「添加磁力」和「添加文件」两件事；两个入口意味着两次点击。
+拖拽仍然不做 —— 它要窗口级 drop 遮罩、多文件取舍、拖入非种子文件的反馈，是独立
+的交互层，混进来判据不干净。这一轮只做「点按钮 → 选文件」。
+
 ## 验收标准
 
 - [AC-01] 依赖可从锁文件复现安装 | 判: `python toolchain/build.py desktop --install` 退出码 0，且 `desktop/package-lock.json` 存在
@@ -71,6 +89,9 @@ spawn 引擎并等发现文件出现。应用退出时调 `POST /shutdown` 让�
 - [AC-10] 添加请求的契约固定：`POST <base>/torrents` + Bearer 令牌 + JSON body | 判: 同上命令，用 stub fetch 断言 URL、method、`Authorization: Bearer <token>`、`Content-Type: application/json`、body 为 `{"magnet":"…"}`；非 2xx 抛带中文文案的 Error、缺 infohash 抛错、连不上引擎与超时各有独立文案
 - [AC-11] 对话框交互：非法输入不发起请求，成功即关闭，失败留窗并显示原因 | 判: `python toolchain/build.py desktop --test add-task-ui` 退出码 0，断言四种情形各一次
 - [AC-12] 真实引擎端到端：界面的添加动作能让任务出现在列表里 | 判: `python desktop/tests/t_add_task_live.py` 退出码 0（起真引擎 → 前端 `addTorrent()` 发磁力 → 断言返回 infohash 与输入一致 → 轮询 `/state` → 渲染 `App` 断言该任务出现在列表且状态为「获取元数据中」→ 重复添加给出「已经在列表」文案 → 清理并停引擎）
+- [AC-13] `.torrent` 文件校验是纯函数，边界可在发送前拦下 | 判: `python toolchain/build.py desktop --test add-file.test` 退出码 0，覆盖空文件（0 字节）、超过 8 MiB、扩展名不是 `.torrent`、内容是纯文本（首字节不是 bencode 的 `d`）、合法种子五类输入，且「拦截原因」互不相同（不能所有非法都返回同一句）
+- [AC-14] 文件添加的请求契约与磁力不同：`Content-Type: application/octet-stream` + 原始字节 body | 判: 同上命令，用 stub fetch 断言 URL、method、`Authorization`、`Content-Type` 精确值、body 是 `Uint8Array` 而非 JSON 字符串；失败文案与磁力共用一套状态码映射
+- [AC-15] 真实引擎端到端：选一个真种子文件 → 任务出现在列表且 infohash 与本地计算一致 | 判: `python desktop/tests/t_add_file_live.py` 退出码 0（起真引擎 → 前端 `addTorrentFile()` 发 `fixtures/` 里的真种子 → 断言返回 infohash 等于 Python 侧独立算出的 infohash → 轮询 `/state` 断言任务出现 → 重复添加给出「已经在列表」→ 清理并停引擎）
 
 ## 实现期偏离（与批准版本的差异）
 
@@ -106,10 +127,15 @@ spawn 引擎并等发现文件出现。应用退出时调 `POST /shutdown` 让�
 
 ## 未验证
 
-- **添加任务只做了磁力，`.torrent` 文件与拖拽未做。** 引擎的 `POST /torrents` 已支持
-  `application/octet-stream`（`t_live_engine.py` 就在用），缺的是文件选择对话框与拖拽事件。
-  未做的原因写在关键设计决策里：混进来会让这一轮的判据不干净。
-- **添加后不校验「任务真的开始下载」。** AC-12 断言的是「请求被接受、任务出现在列表里」，
+- **添加任务已支持磁力与 `.torrent` 文件，拖拽未做。** 引擎的 `POST /torrents` 两种
+  content-type 都已对接，缺的只有拖拽事件。未做的原因写在关键设计决策里：
+  拖拽是独立交互层，混进来会让这一轮的判据不干净。
+- **拖拽添加未做。** 只做了「点按钮 → 选 `.torrent` 文件」。拖拽要窗口级 drop 遮罩、
+  多文件时的取舍策略、拖入非种子文件的即时反馈，是独立交互层，留到单独一轮。
+- **文件添加不校验「内容与扩展名一致」。** 校验只看首字节是不是 bencode 的 `d`，
+  一个改名成 `.torrent` 的 zip 会被送去引擎，由 `torrent_info` 解析失败回 400。
+  这个分工是刻意的：前端不做 bencode 解析，解析失败的原话由引擎给，比我猜的准。
+- **添加后不校验「任务真的开始下载」。** AC-12/AC-15 断言的是「请求被接受、任务出现在列表里」，
   不是「种子能下动」——后者依赖外网与做种情况，属于 `engine/tests/real_swarm.py` 的范围。
   这条边界是刻意的：把外网依赖塞进卡点，卡点就从证据退化成抽奖。
 - **添加对话框在真实壳（WebView2）里的观感未验证。** jsdom 只证明交互与文案，不证明

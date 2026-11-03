@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react'
 import { AddTaskDialog } from './components/AddTaskDialog'
 import { TorrentList } from './components/TorrentList'
 import type { EngineStore } from './store'
+import type { TorrentBytes } from './add-task'
 
 function formatRate(bytesPerSecond: number): string {
   if (bytesPerSecond <= 0) return '—'
@@ -20,9 +21,11 @@ export interface AppProps {
   store: EngineStore
   /** 不传就没有添加入口：探针与测试渲染列表时不需要它 */
   onAddTask?: (magnet: string) => Promise<void>
+  /** 不传则对话框只有磁力模式 */
+  onAddFileTask?: (bytes: TorrentBytes, name: string) => Promise<void>
 }
 
-export function App({ store, onAddTask }: AppProps) {
+export function App({ store, onAddTask, onAddFileTask }: AppProps) {
   const snapshot = useSyncExternalStore(store.subscribeSnapshot, store.getSnapshot)
   const connection = useSyncExternalStore(
     store.subscribeConnection,
@@ -40,6 +43,12 @@ export function App({ store, onAddTask }: AppProps) {
   const submit = async (magnet: string): Promise<void> => {
     if (onAddTask === undefined) return
     await onAddTask(magnet)
+    setAdding(false)
+  }
+
+  const submitFile = async (bytes: TorrentBytes, name: string): Promise<void> => {
+    if (onAddFileTask === undefined) return
+    await onAddFileTask(bytes, name)
     setAdding(false)
   }
 
@@ -93,6 +102,7 @@ export function App({ store, onAddTask }: AppProps) {
             setAdding(false)
           }}
           onSubmit={submit}
+          onSubmitFile={onAddFileTask === undefined ? undefined : submitFile}
         />
       )}
     </div>

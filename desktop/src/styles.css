@@ -281,9 +281,65 @@ body {
   font-weight: 600;
 }
 
+/* 两个模式的切换。只改颜色，不碰尺寸，避免切换时布局跳动 */
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-tab {
+  padding: 5px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  transition: color 120ms var(--ease);
+}
+
+.modal-tab:disabled {
+  cursor: not-allowed;
+}
+
+.modal-tab-active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+/* 原生 file input 的按钮文字不可控，藏起来由自绘按钮触发 click() */
+.modal-file-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+.modal-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.modal-file-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .row,
-  .bar-fill {
+  .bar-fill,
+  .modal-tab {
     transition: none !important;
   }
 }

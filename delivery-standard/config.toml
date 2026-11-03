@@ -177,6 +177,20 @@ cmd = "python toolchain/build.py desktop --test add-task-ui"
 ac = "AC-12"
 cmd = "python desktop/tests/t_add_task_live.py"
 
+# .torrent 文件那条链路。AC-13/AC-14 共用一份单测（校验与契约在同一个文件里）；
+# AC-15 走真引擎，因为引擎对磁力与字节走的是两个不同分支。
+[[units.desktop.evidence]]
+ac = "AC-13"
+cmd = "python toolchain/build.py desktop --test add-file.test"
+
+[[units.desktop.evidence]]
+ac = "AC-14"
+cmd = "python toolchain/build.py desktop --test add-file.test"
+
+[[units.desktop.evidence]]
+ac = "AC-15"
+cmd = "python desktop/tests/t_add_file_live.py"
+
 # ------------------------------------------------- 跨机测试包（P1 渲染与帧率）
 # 这是「界面不卡」从断言变成数据的那个单元。M2a 的四条性能约束全在 jsdom 里判定，
 # 而 jsdom 没有排版引擎与合成器 —— 它能证明「DOM 结构对」，不能证明「60fps」。
