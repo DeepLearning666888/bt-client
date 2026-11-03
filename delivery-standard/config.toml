@@ -191,6 +191,25 @@ cmd = "python toolchain/build.py desktop --test add-file.test"
 ac = "AC-15"
 cmd = "python desktop/tests/t_add_file_live.py"
 
+# 任务操作（暂停/恢复/删除）。AC-16/AC-17 共用一份单测：请求契约与按钮决策
+# 写在同一文件里，拆成两条命令只会让「跑一次」变两次，判定结果完全一样。
+[[units.desktop.evidence]]
+ac = "AC-16"
+cmd = "python toolchain/build.py desktop --test row-action.test"
+
+[[units.desktop.evidence]]
+ac = "AC-17"
+cmd = "python toolchain/build.py desktop --test row-action.test"
+
+[[units.desktop.evidence]]
+ac = "AC-18"
+cmd = "python toolchain/build.py desktop --test row-action-ui"
+
+# 真引擎：暂停 → 恢复 → 删除，靠轮询 /state 判定状态真的变了
+[[units.desktop.evidence]]
+ac = "AC-19"
+cmd = "python desktop/tests/t_row_action_live.py"
+
 # ------------------------------------------------- 跨机测试包（P1 渲染与帧率）
 # 这是「界面不卡」从断言变成数据的那个单元。M2a 的四条性能约束全在 jsdom 里判定，
 # 而 jsdom 没有排版引擎与合成器 —— 它能证明「DOM 结构对」，不能证明「60fps」。

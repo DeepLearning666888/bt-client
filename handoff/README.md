@@ -239,20 +239,25 @@ magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny
 - 如果状态显示成英文 `unknown`，同时顶部多出一条黄色的「部分字段无法解析，已按安全值降级显示」——
   你装的是首版安装包，不是这一份。这是判断新旧版**最直接**的办法，比看版本号可靠。
 
-删任务：界面还没有删除按钮（下一版才做）。用 PowerShell：
+### B4.5 管住这个任务：暂停、继续、删除
 
-```powershell
-$ep  = Get-Content "$env:APPDATA\com.btclient.desktop\engine\engine.endpoint.json" -Raw | ConvertFrom-Json
-$hdr = @{ Authorization = "Bearer $($ep.token)" }
-Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents/dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c?delete_files=1" -Method Delete -Headers $hdr
-```
+列表每一行右边有三个按钮（状态不同时按钮也不同）：
 
-如果按钮点了没反应，用下面这段直接喂引擎，能把「界面坏了」和「引擎坏了」分开：
+| 按钮 | 什么时候出现 | 点了会怎样 |
+|---|---|---|
+| **暂停** | 下载中、做种中、校验中、获取元数据中 | 立刻停，不弹确认 |
+| **继续** | 已暂停 | 立刻恢复，不弹确认 |
+| **删除** | 任何状态 | **弹确认框**，还要你点第二下 |
 
-```powershell
-$body = @{ magnet = 'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny' } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://127.0.0.1:$($ep.port)/torrents" -Method Post -Headers $hdr -ContentType 'application/json' -Body $body
-```
+**看什么：**
+
+- 点「暂停」→ 那行状态应该几秒内变成「已暂停」，按钮变成「继续」；点「继续」→ 状态回到「下载中」
+- 点「删除」→ 弹窗里显示任务名，有一个「同时删除已经下载的文件」勾选框，**默认不勾**
+- 不勾直接确认 → 任务从列表消失，磁盘上的文件还在
+- 如果点了按钮没反应、或出现一条黄色提示说「这个任务已经不在了」，说明引擎那边已经没这个任务了
+
+**注意**：删除默认保留文件。想连文件一起删，必须在弹窗里**主动勾上那个框**，
+否则删完磁盘空间不会释放 —— 这不是 bug，是刻意让「删任务」和「删数据」分成两步。
 
 **顺序：先卸载旧版，再装本包里这份。** 覆盖安装这条路没验证过，不要走。
 

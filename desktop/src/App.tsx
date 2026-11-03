@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import { AddTaskDialog } from './components/AddTaskDialog'
-import { TorrentList } from './components/TorrentList'
+import { TorrentList, type TorrentActions } from './components/TorrentList'
 import type { EngineStore } from './store'
 import type { TorrentBytes } from './add-task'
 
@@ -23,15 +23,18 @@ export interface AppProps {
   onAddTask?: (magnet: string) => Promise<void>
   /** 不传则对话框只有磁力模式 */
   onAddFileTask?: (bytes: TorrentBytes, name: string) => Promise<void>
+  /** 不传则行内不显示暂停/继续/删除按钮 */
+  onRowActions?: TorrentActions
 }
 
-export function App({ store, onAddTask, onAddFileTask }: AppProps) {
+export function App({ store, onAddTask, onAddFileTask, onRowActions }: AppProps) {
   const snapshot = useSyncExternalStore(store.subscribeSnapshot, store.getSnapshot)
   const connection = useSyncExternalStore(
     store.subscribeConnection,
     store.getConnection,
   )
   const [adding, setAdding] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const torrents = snapshot?.torrents ?? []
   const totalDown = torrents.reduce((sum, t) => sum + t.rateDown, 0)
@@ -44,12 +47,14 @@ export function App({ store, onAddTask, onAddFileTask }: AppProps) {
     if (onAddTask === undefined) return
     await onAddTask(magnet)
     setAdding(false)
+    setActionError(null)
   }
 
   const submitFile = async (bytes: TorrentBytes, name: string): Promise<void> => {
     if (onAddFileTask === undefined) return
     await onAddFileTask(bytes, name)
     setAdding(false)
+    setActionError(null)
   }
 
   return (
@@ -63,7 +68,7 @@ export function App({ store, onAddTask, onAddFileTask }: AppProps) {
               className="btn-primary"
               data-testid="add-open"
               disabled={!canAdd}
-              title={canAdd ? '粘贴磁力链接添加任务' : '引擎离线，无法添加'}
+              title={canAdd ? '粘贴磁力链接或选择种子文件' : '引擎离线，无法添加'}
               onClick={() => {
                 setAdding(true)
               }}
@@ -85,11 +90,34 @@ export function App({ store, onAddTask, onAddFileTask }: AppProps) {
         </div>
       )}
 
+      {actionError !== null && (
+        <div className="banner banner-warn banner-dismissable" role="alert">
+          <span>{actionError}</span>
+          <button
+            type="button"
+            className="banner-close"
+            data-testid="banner-dismiss"
+            aria-label="关闭提示"
+            onClick={() => {
+              setActionError(null)
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {snapshot?.degraded && (
         <div className="banner banner-warn">部分字段无法解析，已按安全值降级显示</div>
       )}
 
-      <TorrentList torrents={torrents} />
+      <TorrentList
+        torrents={torrents}
+        actions={onRowActions}
+        onActionError={(message) => {
+          setActionError(message)
+        }}
+      />
 
       <footer className="foot">
         <span>seq {snapshot?.seq ?? 0}</span>

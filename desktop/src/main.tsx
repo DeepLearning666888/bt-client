@@ -2,10 +2,12 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { addTorrent, addTorrentFile, type TorrentBytes } from './add-task'
+import { pauseTorrent, removeTorrent, resumeTorrent } from './torrent-action'
 import { readEngineConfig, stateUrl, authHeaders, portOf } from './config'
 import { Poller, type SnapshotSource } from './poller'
 import { notifyShellReady } from './shell-bridge'
 import { EngineStore } from './store'
+import type { TorrentActions } from './components/TorrentList'
 import './styles.css'
 
 const store = new EngineStore()
@@ -14,6 +16,7 @@ const config = readEngineConfig()
 /** 添加动作。没配置引擎时保持 undefined，界面据此不显示添加入口。 */
 let addTask: ((magnet: string) => Promise<void>) | undefined
 let addFileTask: ((bytes: TorrentBytes, name: string) => Promise<void>) | undefined
+let rowActions: TorrentActions | undefined
 
 if (config === null) {
   store.markOffline('未配置引擎地址（VITE_ENGINE_URL / VITE_ENGINE_TOKEN）')
@@ -59,6 +62,23 @@ if (config === null) {
     await addTorrentFile(config, bytes)
     void poller.tick()
   }
+
+  // 三个操作都立刻 tick：等下一个 100ms 周期的话，用户会以为没生效再点一次，
+  // 第二次就撞上「任务已经不在了」。
+  rowActions = {
+    pause: async (infohash) => {
+      await pauseTorrent(config, infohash)
+      void poller.tick()
+    },
+    resume: async (infohash) => {
+      await resumeTorrent(config, infohash)
+      void poller.tick()
+    },
+    remove: async (infohash, deleteFiles) => {
+      await removeTorrent(config, infohash, deleteFiles)
+      void poller.tick()
+    },
+  }
 }
 
 const container = document.getElementById('root')
@@ -68,6 +88,11 @@ if (container === null) {
 
 createRoot(container).render(
   <StrictMode>
-    <App store={store} onAddTask={addTask} onAddFileTask={addFileTask} />
+    <App
+      store={store}
+      onAddTask={addTask}
+      onAddFileTask={addFileTask}
+      onRowActions={rowActions}
+    />
   </StrictMode>,
 )

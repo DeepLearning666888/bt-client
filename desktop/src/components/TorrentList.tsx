@@ -5,16 +5,27 @@
  * 高度不定的行（当前设计里没有）。
  *
  * 位移用 transform 而不是 top：top 触发逐帧重排，transform 走合成层。
+ *
+ * 行内动作（暂停/继续/删除）只在这一层出现，因为「哪一行」只有这里知道。
+ * 具体请求由外部注入的 `actions` 发出 —— 组件不知道 HTTP 长什么样。
  */
 
 import { useState } from 'react'
 import type { UIEvent } from 'react'
 import type { Torrent } from '../api'
 import { STATE_LABELS } from '../labels'
+import { rowActionFor } from '../torrent-action'
+import { ConfirmRemoveDialog } from './ConfirmRemoveDialog'
 
 export const DEFAULT_ROW_HEIGHT = 64
 export const DEFAULT_VIEWPORT_HEIGHT = 480
 export const DEFAULT_OVERSCAN = 6
+
+export interface TorrentActions {
+  pause: (infohash: string) => Promise<void>
+  resume: (infohash: string) => Promise<void>
+  remove: (infohash: string, deleteFiles: boolean) => Promise<void>
+}
 
 export interface TorrentListProps {
   torrents: Torrent[]
@@ -24,6 +35,10 @@ export interface TorrentListProps {
   /** 受控滚动位置，便于测试；不传则组件自己管 */
   scrollTop?: number
   onScrollTopChange?: (value: number) => void
+  /** 不传就没有行内按钮：探针与只读场景不需要它 */
+  actions?: TorrentActions
+  /** 动作失败时往上抛一句人话，由上层决定显示在哪 */
+  onActionError?: (message: string) => void
 }
 
 function formatRate(bytesPerSecond: number): string {
@@ -42,7 +57,18 @@ function formatProgress(progress: number): string {
   return `${(progress * 100).toFixed(1)}%`
 }
 
-function TorrentRow({ torrent, height }: { torrent: Torrent; height: number }) {
+interface RowProps {
+  torrent: Torrent
+  height: number
+  /** 没注入 actions 时不渲染按钮：探针渲染 1000 行时多两个按钮会污染性能基线 */
+  withActions: boolean
+  busy: boolean
+  onToggle: (torrent: Torrent, action: 'pause' | 'resume') => void
+  onAskRemove: (torrent: Torrent) => void
+}
+
+function TorrentRow({ torrent, height, withActions, busy, onToggle, onAskRemove }: RowProps) {
+  const action = rowActionFor(torrent.state, torrent.paused)
   return (
     <div className="row" data-testid="torrent-row" style={{ height }}>
       <div className="row-main">
@@ -57,6 +83,36 @@ function TorrentRow({ torrent, height }: { torrent: Torrent; height: number }) {
       <div className="row-side">
         <span className="row-rate">↓ {formatRate(torrent.rateDown)}</span>
         <span className="row-rate">↑ {formatRate(torrent.rateUp)}</span>
+        {withActions && action !== null && (
+          <button
+            type="button"
+            className="row-btn"
+            data-testid={`row-${action}`}
+            disabled={busy}
+            title={action === 'pause' ? '暂停这个任务' : '继续下载'}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggle(torrent, action)
+            }}
+          >
+            {action === 'pause' ? '暂停' : '继续'}
+          </button>
+        )}
+        {withActions && (
+          <button
+            type="button"
+            className="row-btn row-btn-danger"
+            data-testid="row-remove"
+            disabled={busy}
+            title="从列表移除"
+            onClick={(event) => {
+              event.stopPropagation()
+              onAskRemove(torrent)
+            }}
+          >
+            删除
+          </button>
+        )}
       </div>
       <div className="bar-track">
         <div className="bar-fill" style={{ transform: `scaleX(${torrent.progress})` }} />
@@ -72,8 +128,12 @@ export function TorrentList({
   overscan = DEFAULT_OVERSCAN,
   scrollTop: controlledScrollTop,
   onScrollTopChange,
+  actions,
+  onActionError,
 }: TorrentListProps) {
   const [innerScrollTop, setInnerScrollTop] = useState(0)
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
+  const [confirming, setConfirming] = useState<Torrent | null>(null)
   const scrollTop = controlledScrollTop ?? innerScrollTop
 
   const total = torrents.length
@@ -88,6 +148,40 @@ export function TorrentList({
     else setInnerScrollTop(value)
   }
 
+  /** 把单个任务标成「进行中」。同一任务连点两下时第二次直接忽略 ——
+   * 双击删除会把「确认」变成两次请求。 */
+  const run = async (infohash: string, task: () => Promise<void>): Promise<void> => {
+    if (busy.has(infohash)) return
+    setBusy((prev) => new Set(prev).add(infohash))
+    try {
+      await task()
+    } catch (failure) {
+      onActionError?.(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setBusy((prev) => {
+        const next = new Set(prev)
+        next.delete(infohash)
+        return next
+      })
+    }
+  }
+
+  const toggle = (torrent: Torrent, action: 'pause' | 'resume'): void => {
+    if (actions === undefined) return
+    void run(torrent.infohash, () =>
+      action === 'pause' ? actions.pause(torrent.infohash) : actions.resume(torrent.infohash),
+    )
+  }
+
+  const confirmRemove = (deleteFiles: boolean): void => {
+    if (actions === undefined || confirming === null) return
+    const target = confirming
+    void run(target.infohash, async () => {
+      await actions.remove(target.infohash, deleteFiles)
+      setConfirming(null)
+    })
+  }
+
   if (total === 0) {
     return (
       <div className="list list-empty" style={{ height: viewportHeight }}>
@@ -97,17 +191,40 @@ export function TorrentList({
   }
 
   return (
-    <div className="list" style={{ height: viewportHeight }} onScroll={handleScroll}>
-      <div className="list-spacer" style={{ height: total * rowHeight }}>
-        <div
-          className="list-window"
-          style={{ transform: `translateY(${first * rowHeight}px)` }}
-        >
-          {window.map((torrent) => (
-            <TorrentRow key={torrent.infohash} torrent={torrent} height={rowHeight} />
-          ))}
+    <>
+      <div className="list" style={{ height: viewportHeight }} onScroll={handleScroll}>
+        <div className="list-spacer" style={{ height: total * rowHeight }}>
+          <div
+            className="list-window"
+            style={{ transform: `translateY(${first * rowHeight}px)` }}
+          >
+            {window.map((torrent) => (
+              <TorrentRow
+                key={torrent.infohash}
+                torrent={torrent}
+                height={rowHeight}
+                withActions={actions !== undefined}
+                busy={busy.has(torrent.infohash)}
+                onToggle={toggle}
+                onAskRemove={(target) => {
+                  setConfirming(target)
+                }}
+              />
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+
+      {confirming !== null && actions !== undefined && (
+        <ConfirmRemoveDialog
+          name={confirming.name}
+          pending={busy.has(confirming.infohash)}
+          onCancel={() => {
+            setConfirming(null)
+          }}
+          onConfirm={confirmRemove}
+        />
+      )}
+    </>
   )
 }

@@ -11,6 +11,7 @@
  */
 
 import { authHeaders, type EngineConfig } from './config'
+import { engineMessage } from './engine-error'
 
 export interface MagnetOk {
   ok: true
@@ -43,15 +44,6 @@ export function normalizeMagnet(input: string): MagnetVerdict {
     return { ok: false, message: '链接里找不到完整的 btih，可能复制时被截断了' }
   }
   return { ok: true, magnet: trimmed }
-}
-
-/** 从引擎错误体里掏 message；结构不对就返回 null，绝不让 undefined 渗进文案。 */
-function engineMessage(body: unknown): string | null {
-  if (typeof body !== 'object' || body === null) return null
-  const error = (body as Record<string, unknown>)['error']
-  if (typeof error !== 'object' || error === null) return null
-  const message = (error as Record<string, unknown>)['message']
-  return typeof message === 'string' && message.trim() !== '' ? message.trim() : null
 }
 
 export function describeAddFailure(status: number, body: unknown): string {
