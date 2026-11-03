@@ -50,6 +50,7 @@ Get-FileHash .\crossmachine-pack-v1.zip -Algorithm SHA256
 | 事项 | 为什么 |
 |---|---|
 | 别用远程桌面 / 向日葵 / ToDesk 远程操作 | 远程会话下浏览器会退化成软件渲染，测出来必然掉帧，跟代码无关 |
+| **笔记本别用「复制屏幕」接外接显示器** | 双显卡笔记本的内屏与 HDMI 口常接在不同显卡上（如核显 + 独显），镜像要在两块显卡间同步合成，浏览器拿不到 D3D 设备就退回 CPU 画图（WARP）。实测踩过一次：全是 `env-limited`。改成「仅电脑屏幕」或「扩展」并让窗口留在内屏即可 |
 | 把窗口拉大到占满屏幕，别最小化 | 窗口最小化或被遮挡时浏览器会把动画帧降到 1Hz，会显示 0 帧 |
 | 关掉视频、直播、游戏 | 抢占 GPU 和 CPU，数据不可比 |
 | 笔记本插上电源，电源计划选「高性能」 | 省电模式会主动压降刷新率 |
@@ -57,6 +58,13 @@ Get-FileHash .\crossmachine-pack-v1.zip -Algorithm SHA256
 
 页面顶部会显示识别到的渲染器和 DPI，如果写的是 `SwiftShader` 或 `Microsoft Basic Render Driver`，
 说明这台机器在用 CPU 画图，**那份帧率数据不能用来判断代码好坏**，页面会自动标注为「环境受限」。
+
+出现这种情况先别急着测第二遍，在浏览器地址栏打开 `chrome://gpu`（Edge 是 `edge://gpu`）看两处：
+
+- **Graphics Feature Status** 里 `Compositing` 必须是 `Hardware accelerated`
+- 往下拉 **Driver Information**，`Driver Vendor` 不能是 `Microsoft`
+
+改完显示模式或显卡驱动后，**必须把所有浏览器进程退干净再重开** —— GPU 进程的软件模式会沿用，不清干净改了也不生效。
 
 ---
 
