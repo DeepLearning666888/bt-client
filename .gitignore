@@ -62,3 +62,6 @@ artifacts/
 # `python toolchain/pack_handoff.py` 重建；out/ 是脚本在本机跑出来的报告。
 handoff/dist/
 handoff/out/
+
+# 提交信息草稿（临时）
+.workbuddy/msg-*.txt

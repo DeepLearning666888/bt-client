@@ -272,6 +272,15 @@ cmd = "python toolchain/build.py desktop --perf"
 ac = "AC-07"
 cmd = "python desktop/tests/t_perf_headless.py"
 
+# 刷新率校准与阈值推导同在纯函数层，仍是一条 vitest 命令覆盖两条断言
+[[units.crossmachine.evidence]]
+ac = "AC-10"
+cmd = "python toolchain/build.py desktop --test perf"
+
+[[units.crossmachine.evidence]]
+ac = "AC-11"
+cmd = "python toolchain/build.py desktop --test perf"
+
 [[units.crossmachine.evidence]]
 ac = "AC-08"
 cmd = "python desktop/tests/t_crossmachine_pack.py"

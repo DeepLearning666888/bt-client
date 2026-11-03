@@ -19,11 +19,20 @@ import {
   buildReport,
   collectCssText,
   detectAnimationViolations,
+  estimateRefresh,
   isSoftwareRenderer,
   makeTorrents,
   summarizeFrames,
+  thresholdsFor,
 } from './perf-harness'
-import type { EnvFingerprint, PerfReport, SceneResult, ScenarioDef } from './perf-harness'
+import type {
+  DisplayInfo,
+  EnvFingerprint,
+  PerfReport,
+  SceneResult,
+  ScenarioDef,
+  Thresholds,
+} from './perf-harness'
 import type { Torrent } from './api'
 import './styles.css'
 
@@ -31,6 +40,8 @@ const STAGE_HEIGHT = 480
 /** 滚动速度：2000px/s 接近用户快速拖滚动条的手感，且 3s 内不会走完 1000 行 */
 const SCROLL_PX_PER_SECOND = 2000
 const COOLDOWN_MS = 500
+/** 刷新率校准窗口。600ms 在 48Hz 下约 29 个间隔，足够取中位数又不至于让人干等 */
+const CALIBRATE_MS = 600
 
 // ---------------------------------------------------------------- DOM 小工具
 
@@ -83,7 +94,7 @@ function probeRenderer(): string {
   }
 }
 
-function probeEnvironment(): EnvFingerprint {
+function probeEnvironment(display: DisplayInfo): EnvFingerprint {
   const nav = navigator as Navigator & { deviceMemory?: number }
   const renderer = probeRenderer()
   return {
@@ -98,10 +109,30 @@ function probeEnvironment(): EnvFingerprint {
     reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
     renderer,
     software: isSoftwareRenderer(renderer),
+    display,
   }
 }
 
 // ---------------------------------------------------------------- 帧采样
+
+/** 空闲期采一段 rAF 间隔，用来估显示器刷新率。
+ *
+ *  **必须在挂载列表之前调用。** 先挂 1000 行再校准，量到的是「这台机器跑这个页面
+ *  有多快」，再拿这个数去给这个页面放宽门槛 —— 自我循环论证，而且是往好看的方向。 */
+function calibrateDisplay(): Promise<DisplayInfo> {
+  return new Promise((resolve) => {
+    const deltas: number[] = []
+    const start = performance.now()
+    let last = 0
+    const step = (now: number): void => {
+      if (last !== 0) deltas.push(now - last)
+      last = now
+      if (now - start < CALIBRATE_MS) requestAnimationFrame(step)
+      else resolve(estimateRefresh(deltas))
+    }
+    requestAnimationFrame(step)
+  })
+}
 
 interface SampleOptions {
   ms: number
@@ -157,7 +188,11 @@ function Stage({ initial, height, onReady }: StageProps) {
 
 // ---------------------------------------------------------------- 单个场景
 
-async function runScene(mount: HTMLElement, def: ScenarioDef): Promise<SceneResult> {
+async function runScene(
+  mount: HTMLElement,
+  def: ScenarioDef,
+  thresholds: Thresholds,
+): Promise<SceneResult> {
   mount.replaceChildren()
   const host = document.createElement('div')
   mount.appendChild(host)
@@ -225,7 +260,7 @@ async function runScene(mount: HTMLElement, def: ScenarioDef): Promise<SceneResu
   return {
     id: def.id,
     name: def.name,
-    stats: summarizeFrames(deltas),
+    stats: summarizeFrames(deltas, thresholds),
     extra: { mountMs: Math.round(mountMs * 100) / 100 },
   }
 }
@@ -243,25 +278,45 @@ function describeScene(r: SceneResult): string {
   ].join(' · ')
 }
 
+function describeDisplay(display: DisplayInfo): string {
+  if (display.source === 'unavailable') {
+    return `刷新率 未测到（rAF 中位间隔 ${display.medianFrameMs ?? '无'}ms，样本 ${display.samples} 个）`
+      + '：页面可能不在前台，本次数据不参与判定'
+  }
+  return `刷新率 实测 ${display.refreshHz}Hz / 命中 ${display.nominalHz}Hz 档`
+    + ` · 判定按 ${display.targetHz}Hz（预算 ${Math.round((1000 / display.targetHz) * 100) / 100}ms）`
+    + ` · 中位间隔 ${display.medianFrameMs}ms / 样本 ${display.samples}`
+}
+
 async function runAll(log: (line: string) => void): Promise<PerfReport> {
   const mount = must('perf-stage-mount')
-  const env = probeEnvironment()
+
+  // 校准先于一切：挂上列表之后测到的就不是面板刷新率了
+  log('▶ 校准显示器刷新率（空页面 600ms）')
+  const display = await calibrateDisplay()
+  const env = probeEnvironment(display)
 
   log(`环境 dpr=${env.dpr} 屏幕=${env.screen.w}x${env.screen.h} 视口=${env.viewport.w}x${env.viewport.h}`)
   log(`渲染器 ${env.renderer}`)
+  log(describeDisplay(display))
   if (env.software) {
     log('⚠ 软件光栅化：帧率由渲染器决定，本份数据只作记录，不参与判定')
   }
   if (env.reducedMotion) {
     log('⚠ 系统开启「减少动态效果」：transition 已被禁用，数据偏乐观')
   }
+  if (display.source === 'measured' && display.targetHz < 60 - 0.5) {
+    log(`⚠ 面板只有 ${display.targetHz}Hz：阈值按它缩放，绝对帧率不能与 60Hz 机器直接比`)
+  }
 
   await document.fonts.ready
 
+  // 一套阈值贯穿三个场景与最终结论，避免「场景按 48Hz 数掉帧、结论按 60Hz 判定」
+  const thresholds = thresholdsFor(env)
   const results: SceneResult[] = []
   for (const def of SCENARIOS) {
     log(`▶ ${def.name} — ${def.question}`)
-    const result = await runScene(mount, def)
+    const result = await runScene(mount, def, thresholds)
     results.push(result)
     log(describeScene(result))
     await waitMs(COOLDOWN_MS)
@@ -334,7 +389,8 @@ function main(): void {
   const reportPre = must('perf-report')
   const log = makeLogger(logPre)
 
-  const env = probeEnvironment()
+  // 刷新率要等点了「开始测量」才采得到，这里先按「未测到」占位
+  const env = probeEnvironment(estimateRefresh([]))
   envEl.textContent = env.software
     ? `渲染器 ${env.renderer}（软件光栅化）· dpr ${env.dpr} · ${env.viewport.w}x${env.viewport.h}`
     : `渲染器 ${env.renderer} · dpr ${env.dpr} · ${env.viewport.w}x${env.viewport.h} · ${env.hardwareConcurrency} 线程`
@@ -354,6 +410,10 @@ function main(): void {
       latest = report
       statusEl.textContent = `结论：${report.verdict.level}`
       statusEl.dataset['level'] = report.verdict.level
+      // 跑完才知道真实刷新率，顶部那行要跟着更新
+      envEl.textContent = `渲染器 ${report.env.renderer} · dpr ${report.env.dpr}`
+        + ` · ${report.env.viewport.w}x${report.env.viewport.h}`
+        + ` · ${describeDisplay(report.env.display)}`
       if (saveBtn !== null) saveBtn.disabled = false
       // 同时写进 DOM：headless 抓不到下载，但能抓到这份文本
       reportPre.textContent = JSON.stringify(report)

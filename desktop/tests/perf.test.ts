@@ -14,13 +14,26 @@ import {
   buildReport,
   classifyVerdict,
   collectCssText,
+  deriveThresholds,
   detectAnimationViolations,
+  estimateRefresh,
   isSoftwareRenderer,
   makeTorrents,
   percentile,
   summarizeFrames,
+  thresholdsFor,
 } from '../src/perf-harness'
-import type { EnvFingerprint, SceneResult } from '../src/perf-harness'
+import type { DisplayInfo, EnvFingerprint, SceneResult } from '../src/perf-harness'
+
+/** 60Hz 面板的 display 样本（主流程默认走这条） */
+const DISPLAY_60: DisplayInfo = {
+  refreshHz: 60,
+  nominalHz: 60,
+  medianFrameMs: 16.67,
+  samples: 30,
+  source: 'measured',
+  targetHz: 60,
+}
 
 function fakeEnv(overrides: Partial<EnvFingerprint> = {}): EnvFingerprint {
   return {
@@ -35,14 +48,16 @@ function fakeEnv(overrides: Partial<EnvFingerprint> = {}): EnvFingerprint {
     reducedMotion: false,
     renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)',
     software: false,
+    display: DISPLAY_60,
     ...overrides,
   }
 }
 
-function scene(id: 's1' | 's2' | 's3', deltas: number[]): SceneResult {
+/** 场景统计按「这块面板」的口径算，和页面侧一致 */
+function scene(id: 's1' | 's2' | 's3', deltas: number[], env = fakeEnv()): SceneResult {
   const def = SCENARIOS.find((s) => s.id === id)
   if (!def) throw new Error(`未知场景 ${id}`)
-  return { id, name: def.name, stats: summarizeFrames(deltas), extra: {} }
+  return { id, name: def.name, stats: summarizeFrames(deltas, thresholdsFor(env)), extra: {} }
 }
 
 /** 生成 n 个稳定在 target 毫秒的帧间隔 */
@@ -198,7 +213,7 @@ describe('AC-04 报告结构可 JSON 往返', () => {
     expect(report.env.screen).toEqual({ w: 1920, h: 1080 })
     expect(report.scenarios).toHaveLength(3)
     expect(report.verdict.level).toBe('pass')
-    expect(report.schema).toBe('perf-v1')
+    expect(report.schema).toBe('perf-v2')
     expect(report.thresholds).toEqual(THRESHOLDS)
   })
 
@@ -293,6 +308,131 @@ describe('AC-05 结论分档', () => {
       scene('s3', deltas),
     ])
     expect(v.level).toBe('warn')
+  })
+})
+
+describe('AC-10 刷新率实测与阈值缩放', () => {
+  // 各面板的稳态帧间隔
+  const HZ60 = 1000 / 60
+  const HZ48 = 1000 / 48
+  const HZ24 = 1000 / 24
+  const HZ120 = 1000 / 120
+
+  const sceneAll = (delta: number, env: EnvFingerprint): SceneResult[] => [
+    scene('s1', steady(30, delta), env),
+    scene('s2', steady(120, delta), env),
+    scene('s3', steady(120, delta), env),
+  ]
+
+  it('样本不足 → unavailable，回落 60Hz 且结论为 env-limited', () => {
+    const display = estimateRefresh([16.6, 16.7])
+    expect(display.source).toBe('unavailable')
+    expect(display.refreshHz).toBeNull()
+    expect(display.targetHz).toBe(60)
+    const v = classifyVerdict(fakeEnv({ display }), sceneAll(HZ60, fakeEnv({ display })))
+    expect(v.level).toBe('env-limited')
+    expect(v.reasons[0]).toContain('没能测到显示器刷新率')
+  })
+
+  it('页面在后台（中位间隔 200ms）→ unavailable，不硬判 fail', () => {
+    const display = estimateRefresh(steady(30, 200))
+    expect(display.source).toBe('unavailable')
+    expect(display.medianFrameMs).toBe(200)
+    const v = classifyVerdict(fakeEnv({ display }), [])
+    expect(v.level).toBe('env-limited')
+  })
+
+  it('48Hz 稳态 → 判 pass，且写明不能与 60Hz 直接对比', () => {
+    const display = estimateRefresh(steady(30, HZ48))
+    expect(display.refreshHz).toBe(48)
+    expect(display.nominalHz).toBe(48)
+    expect(display.targetHz).toBe(48)
+
+    const env = fakeEnv({ display })
+    const v = classifyVerdict(env, sceneAll(HZ48, env))
+    expect(v.level).toBe('pass')
+    expect(v.reasons[0]).toContain('不能与 60Hz 机器直接对比')
+    expect(v.reasons[0]).toContain('48')
+
+    // 同一份 48Hz 数据在 60Hz 的尺子下会被判 warn —— 这正是要修掉的误判
+    const wrongRuler = deriveThresholds(60)
+    expect(HZ48).toBeGreaterThan(wrongRuler.p95MaxMs)
+  })
+
+  it('48Hz 面板上跑出半帧率（41.67ms）→ fail，不因面板低而放过', () => {
+    const display = estimateRefresh(steady(30, HZ48))
+    const env = fakeEnv({ display })
+    const v = classifyVerdict(env, sceneAll(HZ24, env))
+    expect(v.level).toBe('fail')
+    expect(v.reasons.join(' ')).toContain('漏 vsync')
+  })
+
+  it('60Hz 稳态 → pass，阈值与历史口径一致', () => {
+    const display = estimateRefresh(steady(30, HZ60))
+    expect(display.refreshHz).toBe(60)
+    expect(display.targetHz).toBe(60)
+    const v = classifyVerdict(fakeEnv({ display }), sceneAll(HZ60, fakeEnv({ display })))
+    expect(v.level).toBe('pass')
+    expect(v.reasons).toEqual(['所有场景在阈值内'])
+  })
+
+  it('高刷面板（120Hz）不提高门槛，判定仍按 60Hz', () => {
+    const display = estimateRefresh(steady(30, HZ120))
+    expect(display.refreshHz).toBe(120)
+    expect(display.targetHz).toBe(60)
+    const t = deriveThresholds(display.targetHz)
+    expect(t.budgetMs).toBeCloseTo(HZ60, 6)
+    expect(t.p95MaxMs).toBe(20)
+  })
+
+  it('实测值吸附到常见档位，不把 20.83ms 读成「48.08Hz 的怪屏」', () => {
+    // 19.98ms → 50.05Hz → 命中 50Hz
+    expect(estimateRefresh(steady(30, 19.98)).nominalHz).toBe(50)
+    // 33.42ms → 29.92Hz → 命中 30Hz
+    expect(estimateRefresh(steady(30, 33.42)).nominalHz).toBe(30)
+  })
+
+  it('中位数不被单次长停顿带偏（用均值就会把 60Hz 判成 45Hz）', () => {
+    const deltas = [...steady(29, HZ60), 200]
+    const display = estimateRefresh(deltas)
+    expect(display.source).toBe('measured')
+    expect(display.refreshHz).toBe(60)
+  })
+
+  it('阈值随目标帧率整体缩放，不会一个按 48 一个按 60', () => {
+    for (const hz of [24, 30, 48, 60]) {
+      const t = deriveThresholds(hz)
+      expect(t.budgetMs).toBeCloseTo(1000 / hz, 6)
+      expect(t.dropMs).toBeCloseTo((1000 / hz) * 1.5, 6)
+      expect(t.p50MaxMs).toBeCloseTo((1000 / hz) * 1.5, 6)
+      expect(t.failFps).toBeCloseTo(hz / 2, 1)
+    }
+  })
+})
+
+describe('AC-11 报告携带刷新率与推导出的阈值', () => {
+  it('env.display 六字段齐全，thresholds 由 targetHz 推导', () => {
+    const display = estimateRefresh(steady(30, 1000 / 48))
+    const env = fakeEnv({ display })
+    const report = buildReport({
+      env,
+      scenarios: [scene('s1', steady(30, 1000 / 48), env), scene('s2', steady(30, 1000 / 48), env), scene('s3', steady(30, 1000 / 48), env)],
+      cssAudit: [],
+    })
+
+    expect(Object.keys(report.env.display).sort()).toEqual(
+      ['medianFrameMs', 'nominalHz', 'refreshHz', 'samples', 'source', 'targetHz'],
+    )
+    expect(report.thresholds).toEqual(deriveThresholds(48))
+    expect(report.thresholds.targetHz).toBe(48)
+    expect(report.schema).toBe('perf-v2')
+    expect(JSON.parse(JSON.stringify(report))).toEqual(report)
+  })
+
+  it('没带 display 的老数据不抛错，按 60Hz 兜底', () => {
+    const legacy = fakeEnv()
+    delete (legacy as { display?: DisplayInfo }).display
+    expect(thresholdsFor(legacy)).toEqual(THRESHOLDS)
   })
 })
 

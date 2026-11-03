@@ -244,8 +244,8 @@ def run_probe(browser: str, url: str, profile: Path) -> dict:
 def validate(report: dict) -> list[str]:
     problems: list[str] = []
 
-    if report.get("schema") != "perf-v1":
-        problems.append(f"schema 不是 perf-v1：{report.get('schema')!r}")
+    if report.get("schema") != "perf-v2":
+        problems.append(f"schema 不是 perf-v2：{report.get('schema')!r}")
 
     scenarios = report.get("scenarios")
     if not isinstance(scenarios, list):
@@ -279,6 +279,33 @@ def validate(report: dict) -> list[str]:
     if not isinstance(env.get("renderer"), str):
         problems.append("env.renderer 缺失")
 
+    # 刷新率校准：headless 下也必须有结果（rAF 由虚拟合成器驱动，约 59-60Hz）。
+    # 这里只验「采到了、口径自洽」，不验具体 Hz —— 虚拟合成器的节拍不是真屏。
+    display = env.get("display") or {}
+    if display.get("source") not in {"measured", "unavailable"}:
+        problems.append(f"env.display.source 非法：{display.get('source')!r}")
+    if display.get("source") == "measured":
+        if not isinstance(display.get("samples"), int) or display["samples"] < 5:
+            problems.append(f"校准样本过少：{display.get('samples')!r}")
+        if not isinstance(display.get("refreshHz"), (int, float)) or display["refreshHz"] <= 0:
+            problems.append(f"env.display.refreshHz 无效：{display.get('refreshHz')!r}")
+    target_hz = display.get("targetHz")
+    if not isinstance(target_hz, (int, float)) or not (15 <= target_hz <= 60):
+        problems.append(f"env.display.targetHz 越界：{target_hz!r}")
+
+    thresholds = report.get("thresholds") or {}
+    if "thresholds" not in report:
+        problems.append("缺 thresholds，跨机数据没法对齐口径")
+    elif isinstance(target_hz, (int, float)) and abs(thresholds.get("targetHz", -1) - target_hz) > 1e-9:
+        problems.append(
+            f"thresholds.targetHz={thresholds.get('targetHz')!r} 与 display.targetHz={target_hz} 不一致",
+        )
+    if isinstance(target_hz, (int, float)) and isinstance(thresholds.get("budgetMs"), (int, float)):
+        if abs(thresholds["budgetMs"] - 1000.0 / target_hz) > 1e-6:
+            problems.append(
+                f"帧预算没跟目标帧率走：budgetMs={thresholds['budgetMs']!r} targetHz={target_hz}",
+            )
+
     verdict = report.get("verdict") or {}
     if verdict.get("level") not in {"pass", "warn", "fail", "env-limited"}:
         problems.append(f"verdict.level 不是四档之一：{verdict.get('level')!r}")
@@ -287,9 +314,6 @@ def validate(report: dict) -> list[str]:
 
     if not isinstance(report.get("cssAudit"), list):
         problems.append("cssAudit 不是数组")
-
-    if "thresholds" not in report:
-        problems.append("缺 thresholds，跨机数据没法对齐口径")
 
     try:
         round_trip = json.loads(json.dumps(report))
@@ -315,6 +339,14 @@ def describe(report: dict) -> None:
     env = report.get("env", {})
     print(f"  env: dpr={env.get('dpr')} renderer={env.get('renderer')} "
           f"screen={env.get('screen')} viewport={env.get('viewport')}")
+    display = env.get("display") or {}
+    thresholds = report.get("thresholds") or {}
+    print(f"  display: source={display.get('source')} refreshHz={display.get('refreshHz')} "
+          f"nominalHz={display.get('nominalHz')} targetHz={display.get('targetHz')} "
+          f"median={display.get('medianFrameMs')}ms samples={display.get('samples')}")
+    print(f"  thresholds: targetHz={thresholds.get('targetHz')} "
+          f"budget={thresholds.get('budgetMs')} p95Max={thresholds.get('p95MaxMs')} "
+          f"failFps={thresholds.get('failFps')}")
     verdict = report.get("verdict", {})
     print(f"  verdict: {verdict.get('level')}")
     for reason in verdict.get("reasons", []):

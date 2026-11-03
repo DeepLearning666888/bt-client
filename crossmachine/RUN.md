@@ -80,9 +80,31 @@ JSON 里有三个场景，它们的作用不一样：
 - `pass` — 都在阈值内
 - `warn` — 有指标超线但没到严重程度，列表里写了是哪一项、超了多少
 - `fail` — 明显不达标
-- `env-limited` — 环境受限（软渲染），数据只作记录
+- `env-limited` — 环境受限（软渲染，或页面不在前台没测到刷新率），数据只作记录
 
 阈值和判定理由都写在 JSON 里（`thresholds` 和 `verdict.reasons`），不用猜。
+
+### 先看刷新率，再看帧率
+
+跑之前页面会花 0.6 秒量这块屏的刷新率，结果在 `env.display`：
+
+```json
+"display": {"refreshHz": 48.1, "nominalHz": 48, "medianFrameMs": 20.8,
+            "samples": 29, "source": "measured", "targetHz": 48}
+```
+
+**判定按 `targetHz` 缩放**，它等于「这块屏的刷新率」和「产品目标 60」里较小的那个：
+
+- 屏是 60Hz 或更高 → `targetHz` 是 60，和历史数据同尺子
+- 屏是 48Hz → `targetHz` 是 48，帧预算 20.83ms，p95 线放宽到 25ms。
+  一块稳定的 48Hz 屏跑出 48fps 是**正常的**，不是掉帧
+- 屏只有 48Hz 却跑出 24fps → 判 `fail`。低面板不放宽到「每隔一帧漏一次」也叫合格
+
+`source` 是 `unavailable` 说明页面不在前台（窗口被完全遮住或最小化了），量不到刷新率，
+这时结论固定是 `env-limited`、数据不进对比。**重新跑一次，别把窗口最小化。**
+
+所以跨机比对时只能比同一 `targetHz` 的数据。48Hz 机器的绝对帧率不能和 60Hz 机器放一起看 ——
+理由和证据都在 `verdict.reasons` 第一行。
 
 ---
 
