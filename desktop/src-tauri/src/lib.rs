@@ -136,6 +136,11 @@ fn setup(app: &mut tauri::App) -> Result<(), String> {
         .title("BT 客户端")
         .inner_size(1100.0, 720.0)
         .min_inner_size(720.0, 480.0)
+        // Tauri 在 Windows 上会替换 WebView2 的拖放处理器（用来生成自己的 DragDropEvent），
+        // 代价是页面里的 HTML5 dragenter/drop 全部收不到。界面的「拖入 .torrent 添加」
+        // 走的是 HTML5 拖放，所以必须把这个内部处理器关掉。
+        // 关掉后前端拿不到 Tauri 的 onDragDropEvent —— 我们本来也不用它。
+        .disable_drag_drop_handler()
         // 注入必须在页面脚本之前，build 之后改不了
         .initialization_script(&script)
         .build()

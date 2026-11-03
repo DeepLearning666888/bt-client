@@ -410,6 +410,34 @@ body {
   white-space: nowrap;
 }
 
+/* 拖拽遮罩。
+ *
+ * pointer-events: none 是必须的：遮罩一旦能接事件，它就会成为 dragover 的目标，
+ * 于是每划过一次边缘就触发一轮 dragenter/dragleave，遮罩自己把自己抖没。
+ * 拖拽事件全程由 window 上的监听接住，遮罩只负责显示。 */
+.drop-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(6, 8, 12, 0.62);
+  /* 内阴影当边框用：border 会改变盒模型，inset 阴影不动尺寸 */
+  box-shadow: inset 0 0 0 3px var(--accent);
+}
+
+.drop-hint {
+  padding: 14px 26px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .row,
   .bar-fill,

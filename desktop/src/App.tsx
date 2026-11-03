@@ -3,7 +3,8 @@ import { useSyncExternalStore } from 'react'
 import { AddTaskDialog } from './components/AddTaskDialog'
 import { TorrentList, type TorrentActions } from './components/TorrentList'
 import type { EngineStore } from './store'
-import type { TorrentBytes } from './add-task'
+import { prepareTorrentFile, type TorrentBytes } from './add-task'
+import { useDragDrop } from './use-drag-drop'
 
 function formatRate(bytesPerSecond: number): string {
   if (bytesPerSecond <= 0) return '—'
@@ -56,6 +57,47 @@ export function App({ store, onAddTask, onAddFileTask, onRowActions }: AppProps)
     setAdding(false)
     setActionError(null)
   }
+
+  const reportFailure = (failure: unknown): void => {
+    setActionError(failure instanceof Error ? failure.message : String(failure))
+  }
+
+  // 拖入磁力：与对话框走同一个 submit，只是不需要经过输入框
+  const dropMagnet = (magnet: string): void => {
+    void submit(magnet).catch(reportFailure)
+  }
+
+  // 拖入种子文件：与「种子文件」页签走同一条 prepareTorrentFile → submitFile
+  const dropFile = (file: File): void => {
+    if (onAddFileTask === undefined) {
+      setActionError('当前版本不支持文件添加')
+      return
+    }
+    void (async () => {
+      try {
+        const prepared = await prepareTorrentFile(file)
+        if (!prepared.ok) {
+          setActionError(prepared.message)
+          return
+        }
+        await submitFile(prepared.bytes, prepared.name)
+      } catch (failure) {
+        reportFailure(failure)
+      }
+    })()
+  }
+
+  // 只要接了添加入口就接管拖拽，**不**跟「引擎离线」联动：
+  // 离线时拖进来立刻收到「连不上引擎」，比拖了毫无反应更接近事实。
+  // 遮罩是唯一在 dragover 阶段能给出的反馈，关掉它等于让用户猜哪能放。
+  const over = useDragDrop({
+    enabled: onAddTask !== undefined,
+    onMagnet: dropMagnet,
+    onFile: dropFile,
+    onReject: (message) => {
+      setActionError(message)
+    },
+  })
 
   return (
     <div className="app">
@@ -132,6 +174,12 @@ export function App({ store, onAddTask, onAddFileTask, onRowActions }: AppProps)
           onSubmit={submit}
           onSubmitFile={onAddFileTask === undefined ? undefined : submitFile}
         />
+      )}
+
+      {over && (
+        <div className="drop-mask" data-testid="drop-mask">
+          <div className="drop-hint">松手添加任务</div>
+        </div>
       )}
     </div>
   )

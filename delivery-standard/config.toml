@@ -210,6 +210,20 @@ cmd = "python toolchain/build.py desktop --test row-action-ui"
 ac = "AC-19"
 cmd = "python desktop/tests/t_row_action_live.py"
 
+# 拖拽添加。AC-20/AC-21 共用判定层的单测（路径判定与遮罩判定在同一个文件里）；
+# AC-22 只验接线，不起真引擎 —— 拖入的文件最终走 AC-15 验过的同一条上传路径。
+[[units.desktop.evidence]]
+ac = "AC-20"
+cmd = "python toolchain/build.py desktop --test drag-drop.test"
+
+[[units.desktop.evidence]]
+ac = "AC-21"
+cmd = "python toolchain/build.py desktop --test drag-drop.test"
+
+[[units.desktop.evidence]]
+ac = "AC-22"
+cmd = "python toolchain/build.py desktop --test drag-drop-ui"
+
 # ------------------------------------------------- 跨机测试包（P1 渲染与帧率）
 # 这是「界面不卡」从断言变成数据的那个单元。M2a 的四条性能约束全在 jsdom 里判定，
 # 而 jsdom 没有排版引擎与合成器 —— 它能证明「DOM 结构对」，不能证明「60fps」。
