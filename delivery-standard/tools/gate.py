@@ -224,6 +224,30 @@ def check_evidence_file(path: Path) -> tuple[bool, str]:
     return True, "ok"
 
 
+EXIT_RE = re.compile(r"\(exit=(-?\d+)\)")
+
+
+def read_exit_code(path: Path) -> int | None:
+    """从证据日志首行取 `(exit=n)`。手工证据（非 _run_command 产出）返回 None。"""
+    try:
+        with path.open("rb") as fh:
+            first = fh.readline(4096)
+    except OSError:
+        return None
+    match = EXIT_RE.search(first.decode("utf-8", "replace"))
+    return int(match.group(1)) if match else None
+
+
+def expect_map_for(node: dict) -> dict[str, int]:
+    """config 中每条 AC 期望的退出码。未写 expect 的按 0 处理（与 cmd_gen 一致）。"""
+    out: dict[str, int] = {}
+    for entry in node.get("evidence") or []:
+        ac = entry.get("ac")
+        if ac:
+            out[ac] = int(entry.get("expect", 0))
+    return out
+
+
 # ---------------------------------------------------------------- 卡点实现
 
 
@@ -331,36 +355,80 @@ def gate_g2(cfg: dict, unit: str, node: dict, evidence_dir: Path) -> GateResult:
     )
 
 
-def gate_g3(spec: Spec, unit: str, evidence_dir: Path) -> GateResult:
+def gate_g3(
+    spec: Spec, unit: str, evidence_dir: Path, expects: dict[str, int] | None = None
+) -> GateResult:
+    """证据卡点：文件在、编码能用、**退出码与预期一致**。
+
+    第三条是 2026-11-03 补的。此前只查前两条，于是 `gen` 打出 `[FAIL] AC-01
+    (exit=1)` 之后 `all` 照样报 G3 PASS —— 一条失败的证据和一条通过的证据，
+    对判定器来说长得完全一样，绿灯也就不构成证据。config 里的 `expect` 字段
+    同样只是装饰：它只影响 `gen` 的打印，没有任何一处读它来判定。
+
+    现在的判定：
+      - 首行有 `(exit=n)` 且该 AC 在 config 里声明了 expect → 必须相等
+      - 首行有 `(exit=n)` 但 config 里没声明 → 必须为 0
+      - 首行没有 `(exit=n)` 但 config 里声明了 cmd → 失败，证据无法核验
+      - 首行没有 `(exit=n)` 且没声明 cmd → 视为手工证据，只校验格式
+    """
     if not spec.criteria:
         return GateResult("g3", "fail", "无 AC 可核对（G1 未通过）")
 
+    expects = expects or {}
     unit_dir = evidence_dir / unit
     missing: list[str] = []
     bad: list[str] = []
+    nocode: list[str] = []
+    mismatch: list[str] = []
+    manual: list[str] = []
+    nonzero_ok = 0
+
     for crit in spec.criteria:
         matches = sorted(unit_dir.glob(f"{crit.cid}.*")) if unit_dir.is_dir() else []
         if not matches:
             missing.append(crit.cid)
             continue
-        ok, why = check_evidence_file(matches[0])
+        target = matches[0]
+        ok, why = check_evidence_file(target)
         if not ok:
             bad.append(f"{crit.cid}（{why}）")
+            continue
+
+        code = read_exit_code(target)
+        want = expects.get(crit.cid)
+        if code is None:
+            if want is not None:
+                nocode.append(crit.cid)
+            else:
+                manual.append(crit.cid)
+            continue
+        if want is None:
+            want = 0
+        if code != want:
+            mismatch.append(f"{crit.cid} 期望 exit={want} 实际 exit={code}")
+        elif want != 0:
+            nonzero_ok += 1
 
     problems = []
     if missing:
         problems.append(f"缺证据：{', '.join(missing)}")
     if bad:
         problems.append("证据不可用：" + "；".join(bad))
+    if nocode:
+        problems.append(
+            "证据无退出码可核验（config 声明了命令却没记录 (exit=n)）：" + ", ".join(nocode)
+        )
+    if mismatch:
+        problems.append("退出码与预期不符：" + "；".join(mismatch))
     if problems:
         return GateResult("g3", "fail", "；".join(problems))
 
-    return GateResult(
-        "g3",
-        "pass",
-        f"{len(spec.criteria)} 条 AC 证据齐备且编码合规",
-        evidence=_rel(unit_dir),
-    )
+    detail = f"{len(spec.criteria)} 条 AC 证据齐备，编码合规，退出码与预期一致"
+    if nonzero_ok:
+        detail += f"（其中 {nonzero_ok} 条为期望非 0 的负向用例）"
+    if manual:
+        detail += f"；{len(manual)} 条为手工证据，仅校验格式（{', '.join(manual)}）"
+    return GateResult("g3", "pass", detail, evidence=_rel(unit_dir))
 
 
 def gate_g4(spec: Spec) -> GateResult:
@@ -447,7 +515,7 @@ def cmd_selftest() -> int:
             path.write_text(content, encoding="utf-8")
             return gate_g4(parse_spec(path)).status
 
-    def run_g3(writer) -> str:
+    def run_g3(writer, expects: dict[str, int] | None = None) -> str:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             path = root / "u.md"
@@ -456,7 +524,13 @@ def cmd_selftest() -> int:
             unit_dir = ev_root / "demo"
             unit_dir.mkdir(parents=True)
             writer(unit_dir / "AC-01.log")
-            return gate_g3(parse_spec(path), "demo", ev_root).status
+            return gate_g3(parse_spec(path), "demo", ev_root, expects).status
+
+    def head(code: int):
+        """产出一条 _run_command 格式的日志（首行带退出码）。"""
+        return lambda p: p.write_text(
+            f"# 2026-11-03 12:00:00  $ demo command  (exit={code})\noutput\n", encoding="utf-8"
+        )
 
     cases.append(("完整 spec 应通过", run_g1(good) == "pass"))
     cases.append(("spec 缺失应失败", run_g1(None) == "fail"))
@@ -476,6 +550,21 @@ def cmd_selftest() -> int:
     cases.append(("证据含 NUL 应失败", run_g3(lambda p: p.write_bytes(b"o\x00k")) == "fail"))
     cases.append(
         ("证据合规应通过", run_g3(lambda p: p.write_text("ok", encoding="utf-8")) == "pass")
+    )
+    # 退出码校验（2026-11-03 补的窟窿）。这几条是本次改动的核心证据：
+    # 前四条里只要少一条，就说明判定又退回到「文件在就算过」。
+    cases.append(("退出码 0 且期望 0 应通过", run_g3(head(0), {"AC-01": 0}) == "pass"))
+    cases.append(("退出码 1 但期望 0 应失败", run_g3(head(1), {"AC-01": 0}) == "fail"))
+    cases.append(("退出码 1 且期望 1 应通过", run_g3(head(1), {"AC-01": 1}) == "pass"))
+    cases.append(("退出码 0 但期望 1 应失败", run_g3(head(0), {"AC-01": 1}) == "fail"))
+    cases.append(
+        ("非 0 退出码未声明 expect 应失败", run_g3(head(2)) == "fail")
+    )
+    cases.append(
+        (
+            "声明了命令却无退出码应失败",
+            run_g3(lambda p: p.write_text("ok\n", encoding="utf-8"), {"AC-01": 0}) == "fail",
+        )
     )
 
     passed = 0
@@ -574,7 +663,7 @@ def main() -> int:
         elif gate_id == "g2":
             results.append(gate_g2(cfg, args.unit, node, evidence_dir))
         elif gate_id == "g3":
-            results.append(gate_g3(spec, args.unit, evidence_dir))
+            results.append(gate_g3(spec, args.unit, evidence_dir, expect_map_for(node)))
         else:
             results.append(gate_g4(spec))
 

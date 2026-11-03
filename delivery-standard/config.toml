@@ -31,6 +31,10 @@ expect = 1
 ac = "AC-04"
 cmd = "python delivery-standard/tools/gate.py selftest"
 
+[[units.delivery-standard.evidence]]
+ac = "AC-05"
+cmd = "python delivery-standard/tests/t_g3_exit.py"
+
 
 # ------------------------------------------------------------------ 真实模块
 # cmake / ninja 不在 PATH，路径取自 natdiag/build/CMakeCache.txt 的 CMAKE_COMMAND。

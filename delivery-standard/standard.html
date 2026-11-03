@@ -235,10 +235,13 @@ setTimeout(function () {
 </div>
 
 <div class="gate">
-  <div class="hd"><b>G3　每条验收标准有证据</b><span class="when">交付前 · 不过则未覆盖项必须移入未验证</span></div>
+  <div class="hd"><b>G3　每条验收标准有证据，且证据本身是成功的</b><span class="when">交付前 · 不过则未覆盖项必须移入未验证</span></div>
   <div class="bd">
-    每个 AC 编号在 <code>evidence/&lt;unit&gt;/</code> 下存在同名文件，且编码合规（拒绝带 BOM 或含 NUL 的文件）。
+    每个 AC 编号在 <code>evidence/&lt;unit&gt;/</code> 下存在同名文件，编码合规（拒绝带 BOM 或含 NUL 的文件），
+    且文件首行记录的 <code>(exit=n)</code> 等于 config 中该 AC 的 <code>expect</code>（未写时按 0）。
     <br><span class="dim">依据 P3：证据由 <code>gate.py gen</code> 产出，不手工创建。</span>
+    <br><span class="dim">第三条是 2026-11-03 补的：此前只查文件在不在，于是 <code>gen</code> 打出 <code>[FAIL] AC-01 (exit=1)</code>
+    之后 <code>all</code> 照样报 G3 PASS — 失败的证据和通过的证据对判定器来说长得一样，绿灯也就不构成证据。</span>
   </div>
 </div>
 
@@ -269,14 +272,14 @@ setTimeout(function () {
 <pre><b>## all delivery-standard</b>（自举：用规范验收规范自身）
 == delivery-standard · T2 · 需过 G1 G2 G3 G4 ==
 
-<span class="ok">[PASS]</span> G1 验收标准已声明  —  4 条 AC，全部携带判定方式
+<span class="ok">[PASS]</span> G1 验收标准已声明  —  5 条 AC，全部携带判定方式
 <span class="ok">[PASS]</span> G2 构建通过  —  1 条命令全部退出码 0
-<span class="ok">[PASS]</span> G3 每条 AC 有证据  —  4 条 AC 证据齐备且编码合规
+<span class="ok">[PASS]</span> G3 每条 AC 有证据  —  5 条 AC 证据齐备，编码合规，退出码与预期一致（其中 1 条为期望非 0 的负向用例）
 <span class="ok">[PASS]</span> G4 未验证项已声明  —  未验证项已声明
 
 结论：通过                                          exit=0</pre>
 
-<pre><b>## selftest</b>（13 项负向自测，证明判定器会说不）
+<pre><b>## selftest</b>（19 项负向自测，证明判定器会说不）
 <span class="ok">[PASS]</span> 完整 spec 应通过        <span class="ok">[PASS]</span> spec 缺失应失败
 <span class="ok">[PASS]</span> 缺验收标准节应失败      <span class="ok">[PASS]</span> AC 缺判定方式应失败
 <span class="ok">[PASS]</span> AC 含待填写应失败       <span class="ok">[PASS]</span> AC 编号重复应失败
@@ -284,15 +287,29 @@ setTimeout(function () {
 <span class="ok">[PASS]</span> 未验证节缺失应失败      <span class="ok">[PASS]</span> 证据缺失应失败
 <span class="ok">[PASS]</span> 证据带 BOM 应失败       <span class="ok">[PASS]</span> 证据含 NUL 应失败
 <span class="ok">[PASS]</span> 证据合规应通过
+<span class="ok">[PASS]</span> 退出码 0 且期望 0 应通过  <span class="ok">[PASS]</span> 退出码 1 但期望 0 应失败
+<span class="ok">[PASS]</span> 退出码 1 且期望 1 应通过  <span class="ok">[PASS]</span> 退出码 0 但期望 1 应失败
+<span class="ok">[PASS]</span> 非 0 退出码未声明 expect 应失败
+<span class="ok">[PASS]</span> 声明了命令却无退出码应失败
 
-13/13 项通过                                          exit=0</pre>
+19/19 项通过                                          exit=0</pre>
+
+<pre><b>## t_g3_exit</b>（退出码判定的端到端验证，10 项）
+<span class="ok">[PASS]</span> 退出码 0 且期望 0 → 通过            <span class="ok">[PASS]</span> 退出码 1 但期望 0 → 失败
+<span class="ok">[PASS]</span> 退出码 1 且期望 1 → 通过（负向用例）  <span class="ok">[PASS]</span> 退出码 0 但期望 1 → 失败
+<span class="ok">[PASS]</span> 退出码 2 且未声明 expect → 失败       <span class="ok">[PASS]</span> 无退出码但声明了命令 → 失败
+<span class="ok">[PASS]</span> 无退出码且未声明命令 → 通过（手工证据） <span class="ok">[PASS]</span> 证据文件缺失 → 失败
+<span class="ok">[PASS]</span> 正文里出现 exit= 不影响首行判定 → 通过
+<span class="ok">[PASS]</span> 首行无退出码、正文里贴了别人的日志 → 仍按手工证据，通过
+
+10/10 项通过                                          exit=0</pre>
 
 <pre><b>## 常驻负向对照单元</b>
 G1 @ __negative__  （无 spec）      → <span class="bad">[FAIL]</span> spec 不存在          exit=1
 G2 @ __failbuild__（构建恒失败）    → <span class="bad">[FAIL]</span> 命令退出码 3         exit=1</pre>
 
 <div class="note ok">
-这 13 项里 3 项是「应当通过」，10 项是「应当失败」。刻意混合：只有正向用例，判定器恒真也能全过；只有负向用例，判定器恒假也能全过。
+这 19 项里 4 项是「应当通过」，15 项是「应当失败」。刻意混合：只有正向用例，判定器恒真也能全过；只有负向用例，判定器恒假也能全过。
 </div>
 
 <h2>六、spec 长什么样</h2>
@@ -353,7 +370,7 @@ NAT 端口映射诊断模块：把引擎层 6 类 alert 归一成统一事件流
 <tr><td class="n">9.1</td><td><b>档位自评无外部约束</b></td><td>声明 T0 就能少走卡点，没有第二个人核对声明是否合理。无技术解，只能靠偏离记录事后暴露行为模式</td></tr>
 <tr><td class="n">9.2</td><td><b>只覆盖构建与证据，不覆盖设计质量</b></td><td>一个模块可以 100% 通过四个卡点，同时架构是错的。卡点保证「说完成时确实能跑且有据」，不保证「做对了」</td></tr>
 <tr><td class="n">9.3</td><td><b>无版本控制支撑</b></td><td>当前项目未初始化 git，档位声明没有 diff 可交叉验证，偏离也无从自动发现</td></tr>
-<tr><td class="n">9.4</td><td><b>测试质量无法校验</b></td><td>G3 只查证据存在，不查断言是否有效。断言写 <code>assert(true)</code> 也能过</td></tr>
+<tr><td class="n">9.4</td><td><b>测试质量无法校验</b></td><td>G3 现在能查出「命令失败」（读退出码），但查不出「命令通过却没测到东西」。断言写 <code>assert(true)</code>、一个用例都没跑、跑的是别的模块，退出码同样是 0</td></tr>
 </table>
 
 <h2>十、怎么用</h2>

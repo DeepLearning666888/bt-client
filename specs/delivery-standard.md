@@ -9,7 +9,8 @@
 - [AC-01] 判定器自身可被 Python 解析与编译 | 判: `python -m py_compile` 退出码 0
 - [AC-02] 判定器能正确报告运行环境与配置 | 判: `gate.py doctor` 退出码 0，输出包含项目根、配置路径、已声明单元
 - [AC-03] 判定器对缺失 spec 的单元返回失败而非通过 | 判: `gate.py g1 --unit __negative__` 退出码为 1（负向验证，证明判定器不是恒真）
-- [AC-04] 判定器对 13 类正常/异常输入给出正确结论 | 判: `gate.py selftest` 退出码 0，13/13 通过
+- [AC-04] 判定器对 19 类正常/异常输入给出正确结论 | 判: `gate.py selftest` 退出码 0，19/19 通过
+- [AC-05] G3 拒绝「退出码与预期不符」的证据，而不是只看文件在不在 | 判: `python delivery-standard/tests/t_g3_exit.py` 退出码 0，10/10 通过（断言：exit 与 expect 相等才 pass、相等但为 0 而期望 1 也 fail、无退出码但声明了命令 fail、正文里出现的 `(exit=n)` 不被误读）
 
 ## 不做范围
 
