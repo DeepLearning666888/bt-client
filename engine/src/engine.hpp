@@ -19,6 +19,10 @@ struct Options {
     std::string data_dir;
     bool no_network = false;                              // 测试用：关掉 DHT/LSD/UPnP/NAT-PMP
     std::string listen_interfaces = "0.0.0.0:0";          // BT 监听口，0 表示由内核分配
+    // 运行期周期落盘的间隔（毫秒）。≤0 表示关掉周期落盘，只保留「加任务即落盘」
+    // 与退出时落盘。做成可配置不是为了调优 —— 是为了让「到点会不会落盘」这件事
+    // 能在测试里用 200ms 验证，而不是让每个用例干等 30 秒。
+    std::int64_t periodic_save_ms = 30'000;
 };
 
 class Engine {

@@ -20,6 +20,10 @@
 
 **端口与令牌写入发现文件。** 引擎监听 `127.0.0.1:0`（内核分配），启动后把 `{host, port, token, pid, version}` 写入 `data/engine.endpoint.json`。避免固定端口冲突，同时让前端无需启动参数即可发现引擎。
 
+**落盘时机：加任务即写，之后每 30 秒写变化过的。** 既然 resume 文件是任务列表的唯一来源，那么「什么时候写」就等于「什么时候算存在」。原先只在退出、暂停、恢复时写，代价是加完任务直接被强杀（任务管理器结束、断电、蓝屏、崩溃）后，那些任务在重启时**整条不存在**，界面显示「还没有任务」，用户以为种子没加进去。实测过：加任务 → `resume/` 目录是空的 → `taskkill /F` → 重启 → 0 条。
+
+现在两道保险：拿到 `handle` 的第一时间（`add_torrent_alert`）就写一份；运行期每 30 秒补一次，只写 `total_done` 变过的任务。30 秒是 libtorrent 侧的折中 —— `save_resume_data` 要序列化整份元数据，调太勤会吃 CPU 和 IO；而 30 秒的进度损失意味着重启后最多多算 30 秒的 hash。`--periodic-save-ms` 可覆盖，这不是调优旋钮，是为了让测试用 200ms 验证「到点会不会写」，而不是每个用例干等 30 秒。
+
 ## 实现期偏离（与批准版本的差异）
 
 三处，都是实现时才暴露的，已就地改到上面：
@@ -62,6 +66,7 @@
 - [AC-13] 跨源请求可被浏览器放行：OPTIONS 预检返回 204 且带全套 CORS 头，正常与错误响应同样带跨源许可，方法白名单不放宽 | 判: `python engine/tests/t_cors.py` 退出码 0，12 项检查全通过
 - [AC-14] 非 ASCII 数据目录下端点文件是合法 UTF-8，且 `data_dir` 字段逐字符等于真实路径 | 判: `python engine/tests/t_path_encoding.py` 退出码 0（纯中文 / 中文+空格 / 混合符号三种目录，各 8 项检查）
 - [AC-15] `delete_files` 的真实语义：删文件时文件真的消失、不删时文件真的留着、删不掉时**响应里带 warning 说明及具体路径** | 判: `python engine/tests/t_delete_files.py` 退出码 0，25 项检查（三个本地种子各校验到 seeding → A `delete_files=1` 断言文件消失且无 warning → B `delete_files=0` 断言文件仍在 → C 用裸句柄占住文件后 `delete_files=1`，断言任务仍被移除、响应带 warning、warning 含「占用」与该文件名、文件确实还在、耗时 < 12s → D 松开句柄后同一路径可正常删除，证明路径没算错）
+- [AC-16] 任务能活过「没走优雅退出」的死亡：加完任务立刻硬杀引擎，重启后任务仍在且状态一致；进度没变化时不重复写盘 | 判: `python engine/tests/t_persist_crash.py` 退出码 0，11 项检查（A 加种子 → 断言 resume 文件已经存在（不是等到退出才写）→ `taskkill /F` → 重启断言仍是 1 条且状态一致；B 加无元数据的磁力 → 断言落盘 → 硬杀重启后两条都在；C 把周期落盘缩到 200ms（`--periodic-save-ms`），等 1.5 秒断言 resume 文件 size 与 mtime 都没变）
 
 ## 不做范围
 
@@ -101,6 +106,14 @@
 
 ## 未验证
 
+- **`total_bytes` 在已完成的任务上恒为 0，未修。** 实测：`state=seeding`、`done_bytes=10240`、
+  `progress=1.0`，而 `total_bytes=0`。来源是 `torrent_status::total`，这个字段在这个
+  libtorrent 版本上对已完成任务返回 0（推测是元数据已被释放）。当前前端解析了这个字段
+  但没有任何 UI 消费它，所以不是用户可见缺陷；等要做「大小」列时必须先换掉来源
+  （候选：`torrent_file()->total_size()` 或 `total_wanted`），而验证替代字段需要同时
+  构造「下载中」和「已完成」两种状态，投入大于收益，这轮没做。
+  顺带记一条教训：**这个字段当初差点让周期落盘的判据假通过** —— 我拿 `st.total > 0`
+  当门禁，而它恒为 0，于是落盘从来没执行，判据却「通过」了。判据通过不等于代码跑过。
 - **HTTPS tracker 路径实测不可用，但归因未定。** 已实测：同网络下 HTTP tracker 的真实种子能正常下载，而 HTTPS tracker 的种子 75s 内零 peer、零字节。两个候选原因无法区分——SSL 缺失使 announce 根本发不出去，或该种子 DHT 未在 75s 内出结果。所以「HTTPS tracker 的种子下不动」是观测事实，「因为缺 OpenSSL」仍是推断，需补 OpenSSL 后复测才能定论。
 - **SSL-only peer（强制加密连接）未覆盖。** 无 OpenSSL 时 MSE 仍可用（RC4，不依赖 TLS），但只接受 SSL 握手的 peer 连不上。
 - **DHT 独立可用性未单独验证。** 上面那个零 peer 案例让「没有 tracker 时 DHT 能否独立找到 peer」变成关键未知，M1b 没做 DHT 单独开关的对照测试。

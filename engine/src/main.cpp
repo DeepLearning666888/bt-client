@@ -44,6 +44,7 @@ void print_usage() {
         "用法: engine [选项]\n"
         "  --data-dir <路径>   数据目录（默认 ./engine-data）\n"
         "  --http-port <端口>  HTTP 端口，0 表示由内核分配（默认 0）\n"
+        "  --periodic-save-ms <毫秒>  运行期落盘间隔（默认 30000，≤0 关闭）\n"
         "  --no-network        关闭 DHT/LSD/UPnP/NAT-PMP，测试用\n"
         "  --version           打印版本后退出\n",
         kVersion);
@@ -188,6 +189,7 @@ int main(int argc, char** argv) {
     std::string data_dir;
     int http_port = 0;
     bool no_network = false;
+    std::int64_t periodic_save_ms = 30'000;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -203,6 +205,8 @@ int main(int argc, char** argv) {
             data_dir = argv[++i];
         } else if (arg == "--http-port" && i + 1 < argc) {
             http_port = std::atoi(argv[++i]);
+        } else if (arg == "--periodic-save-ms" && i + 1 < argc) {
+            periodic_save_ms = std::atoll(argv[++i]);
         } else if (arg == "--no-network") {
             no_network = true;
         } else {
@@ -239,6 +243,7 @@ int main(int argc, char** argv) {
     eng::Options opts;
     opts.data_dir = data_dir;
     opts.no_network = no_network;
+    opts.periodic_save_ms = periodic_save_ms;
     eng::Engine engine(opts);
     {
         std::string err;

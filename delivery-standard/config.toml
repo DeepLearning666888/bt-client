@@ -123,6 +123,11 @@ cmd = "python engine/tests/t_path_encoding.py"
 ac = "AC-15"
 cmd = "python engine/tests/t_delete_files.py"
 
+# 加任务即落盘 + 硬杀重启后仍在。用 taskkill 真杀进程，不是优雅退出。
+[[units.engine-service.evidence]]
+ac = "AC-16"
+cmd = "python engine/tests/t_persist_crash.py"
+
 
 # ------------------------------------------------------------- M2 桌面端
 # 前端命令全部走 toolchain/build.py desktop：gate.py 用 shell=False 执行，
@@ -418,6 +423,11 @@ tier = "T2"
 build = [
     "python toolchain/build.py desktop --perf",
     "python toolchain/build.py crossmachine",
+    # 先重打包安装包再组装 zip。NSIS 打包不幂等（同样的输入两次产出不同字节），
+    # 所以只要有人在中间跑过 `shell bundle`，zip 里装的就会是旧包 —— 而
+    # `t_fieldtest_pack.py` 只看 zip 与它自己的 .sha256 是否一致，发现不了这件事。
+    # 真机拿到的将是一个和最终构建产物不同的安装包。
+    "python toolchain/build.py shell bundle",
     "python toolchain/pack_handoff.py",
 ]
 

@@ -45,6 +45,17 @@ namespace {
 
 char const kVersion[] = "0.1.0-m1b";
 
+/// 运行期周期落盘的默认间隔。改成 `Options::periodic_save_ms` 可配置。
+///
+/// 任务顺序靠 resume 文件恢复（`restore()` 扫 `data/resume/`），而 resume 原先只在
+/// 退出时写。代价是：加完任务直接被强杀（任务管理器结束、断电、蓝屏、崩溃），
+/// 重启后这些任务从列表里整个消失 —— 不只是进度，是记录本身。
+///
+/// 30 秒是折中：libtorrent 的 `save_resume_data` 要序列化整份元数据，调太勤会吃
+/// CPU 和磁盘 IO；但对正在下载的任务，30 秒的进度损失意味着重启后多算 30 秒的 hash，
+/// 可以接受。真正省掉重复写盘的是 `Entry::saved_done` —— 进度没变就不写。
+constexpr std::int64_t kDefaultPeriodicSaveMs = 30'000;
+
 std::string hex_of(lt::sha1_hash const& h) {
     static char const* digits = "0123456789abcdef";
     char const* p = h.data();
@@ -107,6 +118,9 @@ struct Engine::Impl {
         std::string save_path;
         std::string magnet;       // 无元数据时的持久化退路
         std::string last_error;
+        // 上次成功写盘时的已完成字节数。周期落盘只写「进度确实变了」的任务 ——
+        // 已完成的种子每次重写一遍纯属磨损 SSD，不会有任何新信息。
+        std::int64_t saved_done = -1;
     };
     std::unordered_map<std::string, Entry> entries;
 
@@ -125,6 +139,7 @@ struct Engine::Impl {
 
     std::string http_listen = "-";
     std::int64_t started_ms = 0;
+    std::int64_t last_periodic_save_ms = 0;
 
     // ------------------------------------------------------------------ 路径
     fs::path dir_resume() const { return fs::path(opts.data_dir) / "resume"; }
@@ -183,6 +198,33 @@ struct Engine::Impl {
         }
     }
 
+    /// 运行期周期落盘。只写进度真的变了的任务。
+    ///
+    /// 不做这件事的后果不是「少存一点进度」：`restore()` 是靠扫 `data/resume/`
+    /// 重建任务列表的，从没写过 resume 的任务在重启后**整条不存在**。
+    void periodic_save_if_due() {
+        if (opts.periodic_save_ms <= 0) return;
+        std::int64_t now = platform::epoch_ms();
+        if (now - last_periodic_save_ms < opts.periodic_save_ms) return;
+        last_periodic_save_ms = now;
+
+        std::size_t written = 0;
+        for (auto& kv : entries) {
+            Entry& e = kv.second;
+            if (!e.has_handle) continue;
+            lt::torrent_status st = e.handle.status();
+            // 刻意不判 `st.total > 0`：这个字段在已完成的任务上实测返回 0
+            // （done=10240、total=0、state=seeding），拿它当门禁会让周期落盘
+            // 永远不执行 —— 判据会因此「通过」，而代码根本没跑过。
+            if (st.total_done == e.saved_done) continue;
+            e.handle.save_resume_data(lt::torrent_handle::save_info_dict);
+            written += 1;
+        }
+        if (written > 0) {
+            std::fprintf(stderr, "[engine] 周期落盘 %zu 个任务\n", written);
+        }
+    }
+
     void on_save_ok(lt::save_resume_data_alert const* a) {
         std::string ih = hex_of(a->params.info_hashes);
         if (!is_hex40(ih)) return;
@@ -195,6 +237,13 @@ struct Engine::Impl {
         }
         std::error_code ec;
         fs::remove(magnet_file(ih), ec);  // resume 已包含元数据，退路文件不再需要
+
+        // 记下落盘时的进度。周期落盘据此跳过「进度没变」的任务 ——
+        // 缺了这一步，已完成的种子会每 30 秒被重写一遍，纯磨损。
+        auto it = entries.find(ih);
+        if (it != entries.end() && it->second.has_handle) {
+            it->second.saved_done = it->second.handle.status().total_done;
+        }
     }
 
     void on_save_failed(std::string const& ih) {
@@ -284,6 +333,10 @@ struct Engine::Impl {
                     add->handle.unset_flags(lt::torrent_flags::auto_managed);
                     add->handle.set_flags(lt::torrent_flags::paused);
                 }
+                // 一拿到 handle 就先存一份。这是「加完任务立刻被强杀」唯一的保命动作：
+                // 任务列表靠 resume 文件重建，没写过 resume 的任务重启后整条不存在。
+                // 元数据缺失时这次调用会失败，由 on_save_failed 写 .magnet 兜底。
+                add->handle.save_resume_data(lt::torrent_handle::save_info_dict);
             } else if (auto* ok = lt::alert_cast<lt::save_resume_data_alert>(a)) {
                 on_save_ok(ok);
             } else if (auto* bad = lt::alert_cast<lt::save_resume_data_failed_alert>(a)) {
@@ -406,6 +459,8 @@ struct Engine::Impl {
         std::vector<lt::alert*> alerts;
         session->pop_alerts(&alerts);
         if (!alerts.empty()) handle_alerts(alerts);
+
+        periodic_save_if_due();
 
         collector.set_elapsed(static_cast<int>((platform::epoch_ms() - started_ms) / 1000));
         rebuild_state();

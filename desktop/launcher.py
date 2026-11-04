@@ -83,7 +83,13 @@ def discover(data_dir: Path) -> dict | None:
 
 
 def spawn(data_dir: Path, engine_exe: Path = ENGINE_EXE,
-          no_network: bool = False) -> dict:
+          no_network: bool = False,
+          extra_args: list[str] | None = None) -> dict:
+    """起一个引擎并等到能收请求。
+
+    `extra_args` 原样追加到命令行。用途是让测试缩短那些「等 30 秒」的窗口
+    （例如 `--periodic-save-ms 200`），而不是在代码里留一个测试专用的开关。
+    """
     if not engine_exe.exists():
         raise FileNotFoundError(f"找不到引擎 {engine_exe}，先跑 python toolchain/build.py engine")
 
@@ -96,6 +102,8 @@ def spawn(data_dir: Path, engine_exe: Path = ENGINE_EXE,
     args = [str(engine_exe), "--data-dir", str(data_dir), "--http-port", "0"]
     if no_network:
         args.append("--no-network")
+    if extra_args:
+        args.extend(extra_args)
 
     proc = subprocess.Popen(
         args, stdin=subprocess.DEVNULL,
