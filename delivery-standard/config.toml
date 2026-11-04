@@ -307,6 +307,12 @@ cmd = "python desktop/tests/t_shell_single.py"
 ac = "AC-06"
 cmd = "python desktop/tests/t_shell_artifact.py"
 
+# 壳被强杀后重启：孤儿引擎接管。含一个「只让第一条连接超时」的 TCP 代理，
+# 用来在本机造出「引擎活着但探测没响应」—— 桩掉 health_ok 会跳过整个 TCP 判定。
+[[units.tauri-shell.evidence]]
+ac = "AC-07"
+cmd = "python toolchain/build.py shell test --release --test restart_takeover"
+
 [units.installer]
 tier = "T2"
 build = [

@@ -30,6 +30,12 @@ pub const ENDPOINT_NAME: &str = "engine.endpoint.json";
 pub const SPAWN_TIMEOUT: Duration = Duration::from_secs(20);
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(1500);
 
+/// 拉起失败后回头接管旧引擎时的探测超时。
+///
+/// 比 `HEALTH_TIMEOUT` 宽一倍：上一次判它不健康可能只是一次抖动（机器满负荷、
+/// 磁盘抖动），这里沿用同一个短超时只会把同一个误判重复一遍。
+const RECOVER_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// 端点文件的内容。`pid` 缺失不算错误 —— 兼容旧格式，它只用于日志。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {
@@ -169,10 +175,17 @@ pub fn spawn(engine_exe: &Path, data_dir: &Path) -> Result<Resolved, String> {
     std::fs::create_dir_all(data_dir)
         .map_err(|e| format!("创建数据目录 {} 失败：{e}", data_dir.display()))?;
 
-    // 残留文件会让下面的等待循环在第一次迭代就误判为「已就绪」
-    let stale = data_dir.join(ENDPOINT_NAME);
-    if stale.exists() {
-        let _ = std::fs::remove_file(&stale);
+    // 残留的端点文件会让下面的等待循环在第一次迭代就误判为「已就绪」，
+    // 所以必须让它读不出来。但**不能删**：它是上一个引擎留下的唯一线索 ——
+    // 端口和令牌只写在这一个文件里。删了之后，如果新引擎被残留引擎的实例锁
+    // 挡住（退出码 2），那个引擎就再也找不回来了；而且下次启动会重复同样的
+    // 过程，用户只能在任务管理器手动结束 engine.exe 才能恢复。
+    //
+    // 改成清空内容：空文件解析不出端点，等待循环照样不会误判，原内容还在手里。
+    let endpoint_path = data_dir.join(ENDPOINT_NAME);
+    let previous = std::fs::read(&endpoint_path).ok();
+    if previous.is_some() {
+        let _ = std::fs::write(&endpoint_path, b"");
     }
 
     let stderr_path = data_dir.join("engine.stderr.log");
@@ -200,9 +213,25 @@ pub fn spawn(engine_exe: &Path, data_dir: &Path) -> Result<Resolved, String> {
     while Instant::now() < deadline {
         if let Ok(Some(status)) = child.try_wait() {
             let tail = read_tail(&stderr_path, 800);
-            return Err(format!(
-                "引擎提前退出（{status}）\n{tail}"
-            ));
+            restore_endpoint(&endpoint_path, previous.as_deref());
+
+            // 新引擎一起就退，最常见的原因是数据目录里已经有一个活着的引擎
+            // 占着实例锁 —— 也就是壳被强杀后留下的孤儿。此时旧端点往往还连得上，
+            // 直接接管它：用户看到的是软件正常打开，而不是「点了图标没反应」。
+            //
+            // 探测用更长超时：刚才判它不健康可能只是一次抖动，这里不该沿用
+            // 同一个短超时，否则同一个误判会重复一遍。
+            if let Some(endpoint) = read_endpoint(data_dir) {
+                if health_ok(&endpoint, RECOVER_TIMEOUT) {
+                    return Ok(Resolved {
+                        endpoint,
+                        decision: Decision::Reuse,
+                        child: None,
+                    });
+                }
+            }
+
+            return Err(early_exit_message(&status, &tail, previous.is_some()));
         }
         if let Some(endpoint) = read_endpoint(data_dir) {
             if health_ok(&endpoint, HEALTH_TIMEOUT) {
@@ -218,11 +247,51 @@ pub fn spawn(engine_exe: &Path, data_dir: &Path) -> Result<Resolved, String> {
 
     let _ = child.kill();
     let tail = read_tail(&stderr_path, 800);
+    // 同样要把端点还回去：这次没起来，不等于下次起不来，但把地址弄丢了
+    // 会让「下次」也失去认出旧引擎的机会
+    restore_endpoint(&endpoint_path, previous.as_deref());
     Err(format!(
         "等待引擎就绪超时（{}s）；{}\n{tail}",
         SPAWN_TIMEOUT.as_secs(),
         diagnose_endpoint(data_dir)
     ))
+}
+
+/// 把 spawn 之前清空的端点文件还原。
+///
+/// 一次启动失败不该顺带把「上一个引擎的地址」也毁掉：留着它，下一次启动还能
+/// 认出来那个引擎；不留，用户就只能自己去任务管理器清场。
+fn restore_endpoint(path: &Path, previous: Option<&[u8]>) {
+    if let Some(bytes) = previous {
+        let _ = std::fs::write(path, bytes);
+    }
+}
+
+/// 「引擎起来就退」的原因说明。
+///
+/// 单说 `exit code: 2` 等于把定位工作推给用户：他不知道 2 是什么，更不知道该去
+/// 任务管理器。锁冲突这条有确定的成因和确定的处置办法，就直接写出来。
+fn early_exit_message(
+    status: &std::process::ExitStatus,
+    tail: &str,
+    had_endpoint: bool,
+) -> String {
+    // 引擎实例锁被占用时打印「启动失败: 已有实例正在使用该数据目录」，退出码 2
+    if tail.contains("已有实例") {
+        return format!(
+            "数据目录里已经有一个引擎在运行，但连不上它（它记录的地址已失效）。\n\
+             这通常是上次程序被强行结束后留下的残留进程。\n\
+             请打开任务管理器，结束 engine.exe 后重新打开本程序。\n\
+             引擎输出：{}",
+            tail
+        );
+    }
+    let note = if had_endpoint {
+        "（数据目录里有端点文件，但里面没有可用的端口和令牌）"
+    } else {
+        ""
+    };
+    format!("引擎提前退出（{status}）{note}\n{tail}")
 }
 
 /// 超时时说明端点文件的真实状态。
@@ -280,7 +349,12 @@ pub fn resolve(engine_exe: &Path, data_dir: &Path) -> Result<Resolved, String> {
         }),
         Plan::Respawn(_) => {
             let mut resolved = spawn(engine_exe, data_dir)?;
-            resolved.decision = Decision::Respawn;
+            // spawn 自己可能已经接管了旧引擎（锁被占、旧端点还连得上），那时它
+            // 返回的是 Reuse。不能在这里无条件改回 Respawn —— 决策决定「退出时
+            // 关不关引擎」，改错了就会关掉一个不是本次拉起的进程。
+            if resolved.decision == Decision::Spawn {
+                resolved.decision = Decision::Respawn;
+            }
             Ok(resolved)
         }
         Plan::Spawn => spawn(engine_exe, data_dir),
