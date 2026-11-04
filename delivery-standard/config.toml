@@ -134,6 +134,13 @@ cmd = "python engine/tests/t_persist_crash.py"
 ac = "AC-17"
 cmd = "python engine/tests/t_total_bytes.py"
 
+# 两个引擎之间真传 32 MiB。其余测试全是零 peer 的，「收到别人的数据并写对」
+# 这件事此前没有任何判据碰过。必须带 --no-network：开着 LSD 时同机会自己配对，
+# 会绕过 tracker，判据就再也变不红（实测过）。
+[[units.engine-service.evidence]]
+ac = "AC-18"
+cmd = "python engine/tests/t_local_swarm.py"
+
 
 # ------------------------------------------------------------- M2 桌面端
 # 前端命令全部走 toolchain/build.py desktop：gate.py 用 shell=False 执行，

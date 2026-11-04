@@ -68,6 +68,7 @@
 - [AC-15] `delete_files` 的真实语义：删文件时文件真的消失、不删时文件真的留着、删不掉时**响应里带 warning 说明及具体路径** | 判: `python engine/tests/t_delete_files.py` 退出码 0，25 项检查（三个本地种子各校验到 seeding → A `delete_files=1` 断言文件消失且无 warning → B `delete_files=0` 断言文件仍在 → C 用裸句柄占住文件后 `delete_files=1`，断言任务仍被移除、响应带 warning、warning 含「占用」与该文件名、文件确实还在、耗时 < 12s → D 松开句柄后同一路径可正常删除，证明路径没算错）
 - [AC-16] 任务能活过「没走优雅退出」的死亡：加完任务立刻硬杀引擎，重启后任务仍在且状态一致；进度没变化时不重复写盘 | 判: `python engine/tests/t_persist_crash.py` 退出码 0，11 项检查（A 加种子 → 断言 resume 文件已经存在（不是等到退出才写）→ `taskkill /F` → 重启断言仍是 1 条且状态一致；B 加无元数据的磁力 → 断言落盘 → 硬杀重启后两条都在；C 把周期落盘缩到 200ms（`--periodic-save-ms`），等 1.5 秒断言 resume 文件 size 与 mtime 都没变）
 - [AC-17] `/state` 的 `total_bytes` 在**已完成**的任务上必须等于真实大小，不能塌成 0；无元数据时必须如实给 0 | 判: `python engine/tests/t_total_bytes.py` 退出码 0，16 项检查（A 下载中态 `total_bytes` 等于 payload 大小且 `done_bytes=0` → B 把完整内容预置进 `save_path`、删任务重加让它自己校验到 seeding，断言 `total_bytes` 与 `done_bytes` 都等于 payload 大小且 `total_bytes >= done_bytes` → C 无元数据磁力 `has_metadata=false` 且 `total_bytes=0`）
+- [AC-18] 两个引擎之间能**真传数据**：从零开始的客户端靠 peer 拿到完整 32 MiB 并落盘，内容逐字节一致；没有 peer 时一字节都拿不到 | 判: `python engine/tests/t_local_swarm.py` 退出码 0，26 项检查（进程内 HTTP tracker 促成会合，两端都带 `--no-network` 以隔离会合途径 → A 种子端预置完整内容校验到 seeding 且向 tracker 上报 → B 下载端在独立目录加同一份种子、断言两端 `save_path` 不同 → C 采样 17+ 个中间态、`done_bytes` 序列非递减、最终等于 32 MiB → D 下载端文件逐字节等于源且 mtime 落在本次测试期间 → E 关掉两端后同样的种子等满 8 秒仍是 0 字节）
 
 ## 不做范围
 
@@ -107,6 +108,14 @@
 
 ## 未验证
 
+- **（2026-11-05 已验，AC-18）两个引擎之间能真传数据。** 在此之前所有测试都是零 peer
+  的：种子自己造、校验走本地磁盘、progress 要么 0 要么满，「收到别人的数据并写对」
+  这件事没有任何判据碰过。现在用进程内 HTTP tracker 让两个实例会合，32 MiB 逐字节一致。
+  补测时发现一个**会让人假通过的行为**：开着 LSD（默认开）时，同机的两个引擎会通过
+  UDP 组播自行配对，根本不理 tracker 下发的地址 —— 把 peer 端口故意改错，它们照样
+  下完。所以这条测试必须让两端带 `--no-network`（只关 DHT/LSD/UPnP，不关监听与传输），
+  否则判据永远变不红。反过来看这也是一条产品事实：同一台机器上装两个客户端实例，
+  即使 tracker 不可达，它们也能互相发现。
 - **（2026-11-04 已修，AC-17）`total_bytes` 在已完成的任务上塌成 0。** 实测：`state=seeding`、
   `done_bytes=10240`、`progress=1.0`，而 `total_bytes=0`。现在改为 `torrent_status::total`
   为 0 时回落到 `torrent_info::total_size()`（后者不随任务状态变化）。
@@ -118,7 +127,7 @@
   当门禁，而它恒为 0，于是落盘从来没执行，判据却「通过」了。判据通过不等于代码跑过。
 - **HTTPS tracker 路径实测不可用，但归因未定。** 已实测：同网络下 HTTP tracker 的真实种子能正常下载，而 HTTPS tracker 的种子 75s 内零 peer、零字节。两个候选原因无法区分——SSL 缺失使 announce 根本发不出去，或该种子 DHT 未在 75s 内出结果。所以「HTTPS tracker 的种子下不动」是观测事实，「因为缺 OpenSSL」仍是推断，需补 OpenSSL 后复测才能定论。
 - **SSL-only peer（强制加密连接）未覆盖。** 无 OpenSSL 时 MSE 仍可用（RC4，不依赖 TLS），但只接受 SSL 握手的 peer 连不上。
-- **DHT 独立可用性未单独验证。** 上面那个零 peer 案例让「没有 tracker 时 DHT 能否独立找到 peer」变成关键未知，M1b 没做 DHT 单独开关的对照测试。
+- **DHT 独立可用性未单独验证。** 上面那个零 peer 案例让「没有 tracker 时 DHT 能否独立找到 peer」变成关键未知，M1b 没做 DHT 单独开关的对照测试。AC-18 走的是本地 tracker 且**关掉了** DHT/LSD，所以这条仍然完全未测 —— 本地能传不等于公网能靠 DHT 找到人。
 - **resume data 的免校验恢复未逐字节验证。** AC-08 只断言重启后状态到达 seeding，未断言「校验过程被完全跳过」——后者需要对比磁盘读量，当前没有测量手段。
 - **崩溃隔离只做了进程级设计，未注入真实崩溃。** 没有主动触发 libtorrent abort 来验证引擎死亡后界面侧的表现，因为 M1b 尚无界面。
 - **10 Hz 快照在高任务数下的 CPU 占用未测。** AC-09 只测响应延迟，不测定时器本身的开销。
