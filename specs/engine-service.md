@@ -67,6 +67,7 @@
 - [AC-14] 非 ASCII 数据目录下端点文件是合法 UTF-8，且 `data_dir` 字段逐字符等于真实路径 | 判: `python engine/tests/t_path_encoding.py` 退出码 0（纯中文 / 中文+空格 / 混合符号三种目录，各 8 项检查）
 - [AC-15] `delete_files` 的真实语义：删文件时文件真的消失、不删时文件真的留着、删不掉时**响应里带 warning 说明及具体路径** | 判: `python engine/tests/t_delete_files.py` 退出码 0，25 项检查（三个本地种子各校验到 seeding → A `delete_files=1` 断言文件消失且无 warning → B `delete_files=0` 断言文件仍在 → C 用裸句柄占住文件后 `delete_files=1`，断言任务仍被移除、响应带 warning、warning 含「占用」与该文件名、文件确实还在、耗时 < 12s → D 松开句柄后同一路径可正常删除，证明路径没算错）
 - [AC-16] 任务能活过「没走优雅退出」的死亡：加完任务立刻硬杀引擎，重启后任务仍在且状态一致；进度没变化时不重复写盘 | 判: `python engine/tests/t_persist_crash.py` 退出码 0，11 项检查（A 加种子 → 断言 resume 文件已经存在（不是等到退出才写）→ `taskkill /F` → 重启断言仍是 1 条且状态一致；B 加无元数据的磁力 → 断言落盘 → 硬杀重启后两条都在；C 把周期落盘缩到 200ms（`--periodic-save-ms`），等 1.5 秒断言 resume 文件 size 与 mtime 都没变）
+- [AC-17] `/state` 的 `total_bytes` 在**已完成**的任务上必须等于真实大小，不能塌成 0；无元数据时必须如实给 0 | 判: `python engine/tests/t_total_bytes.py` 退出码 0，16 项检查（A 下载中态 `total_bytes` 等于 payload 大小且 `done_bytes=0` → B 把完整内容预置进 `save_path`、删任务重加让它自己校验到 seeding，断言 `total_bytes` 与 `done_bytes` 都等于 payload 大小且 `total_bytes >= done_bytes` → C 无元数据磁力 `has_metadata=false` 且 `total_bytes=0`）
 
 ## 不做范围
 
@@ -106,12 +107,13 @@
 
 ## 未验证
 
-- **`total_bytes` 在已完成的任务上恒为 0，未修。** 实测：`state=seeding`、`done_bytes=10240`、
-  `progress=1.0`，而 `total_bytes=0`。来源是 `torrent_status::total`，这个字段在这个
-  libtorrent 版本上对已完成任务返回 0（推测是元数据已被释放）。当前前端解析了这个字段
-  但没有任何 UI 消费它，所以不是用户可见缺陷；等要做「大小」列时必须先换掉来源
-  （候选：`torrent_file()->total_size()` 或 `total_wanted`），而验证替代字段需要同时
-  构造「下载中」和「已完成」两种状态，投入大于收益，这轮没做。
+- **（2026-11-04 已修，AC-17）`total_bytes` 在已完成的任务上塌成 0。** 实测：`state=seeding`、
+  `done_bytes=10240`、`progress=1.0`，而 `total_bytes=0`。现在改为 `torrent_status::total`
+  为 0 时回落到 `torrent_info::total_size()`（后者不随任务状态变化）。
+  **根因仍只是推断**：`st.total` 在这个 libtorrent 版本上对已完成任务返回 0，我推测是
+  元数据被释放，但没有去读 libtorrent 源码确认。修法绕开了这个字段，所以推断对不对
+  不影响结论；但它确实意味着**其他读 `st.total` 的地方可能有同样问题** —— 目前代码里
+  只剩这一处。
   顺带记一条教训：**这个字段当初差点让周期落盘的判据假通过** —— 我拿 `st.total > 0`
   当门禁，而它恒为 0，于是落盘从来没执行，判据却「通过」了。判据通过不等于代码跑过。
 - **HTTPS tracker 路径实测不可用，但归因未定。** 已实测：同网络下 HTTP tracker 的真实种子能正常下载，而 HTTPS tracker 的种子 75s 内零 peer、零字节。两个候选原因无法区分——SSL 缺失使 announce 根本发不出去，或该种子 DHT 未在 75s 内出结果。所以「HTTPS tracker 的种子下不动」是观测事实，「因为缺 OpenSSL」仍是推断，需补 OpenSSL 后复测才能定论。

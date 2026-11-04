@@ -387,6 +387,15 @@ struct Engine::Impl {
                 if (st.errc) error = st.errc.message();
                 progress = static_cast<double>(st.progress);
                 total_bytes = st.total > 0 ? st.total : 0;
+                // libtorrent 2.x 在**已完成**的任务上 `torrent_status::total` 返回 0（元数据被释放），
+                // 同一时刻 done_bytes 却是完整大小 —— 对外表现为「已下完 10240 字节，总大小 0」，
+                // 连 ETA 都被算成 0。实测 downloading 态正常（10240），只有 seeding 态塌成 0。
+                // 从 torrent_info 取：它在句柄整个生命周期内都有效，不随身状态变化。
+                if (total_bytes == 0) {
+                    if (auto tf = e.handle.torrent_file()) {
+                        total_bytes = tf->total_size();
+                    }
+                }
                 done_bytes = st.total_done > 0 ? st.total_done : 0;
                 rate_down = st.download_rate;
                 rate_up = st.upload_rate;

@@ -128,6 +128,12 @@ cmd = "python engine/tests/t_delete_files.py"
 ac = "AC-16"
 cmd = "python engine/tests/t_persist_crash.py"
 
+# /state 的 total_bytes 曾经只在「下载中」正确，「已完成」塌成 0。
+# 这条必须同时断言两种状态：只测下载中的话，把实现改回去依然全绿。
+[[units.engine-service.evidence]]
+ac = "AC-17"
+cmd = "python engine/tests/t_total_bytes.py"
+
 
 # ------------------------------------------------------------- M2 桌面端
 # 前端命令全部走 toolchain/build.py desktop：gate.py 用 shell=False 执行，
