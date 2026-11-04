@@ -36,6 +36,9 @@ export function App({ store, onAddTask, onAddFileTask, onRowActions }: AppProps)
   )
   const [adding, setAdding] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  // 警告与错误分开：错误意味着「没做成」，警告意味着「做成了，但有件事要告诉你」
+  // （删除时文件被占用）。混在一个通道里，用户分不清该不该重试。
+  const [actionWarning, setActionWarning] = useState<string | null>(null)
 
   const torrents = snapshot?.torrents ?? []
   const totalDown = torrents.reduce((sum, t) => sum + t.rateDown, 0)
@@ -157,6 +160,27 @@ export function App({ store, onAddTask, onAddFileTask, onRowActions }: AppProps)
         </div>
       )}
 
+      {actionWarning !== null && (
+        <div
+          className="banner banner-warn banner-dismissable"
+          data-testid="banner-warning"
+          role="status"
+        >
+          <span>{actionWarning}</span>
+          <button
+            type="button"
+            className="banner-close"
+            data-testid="warning-dismiss"
+            aria-label="关闭提示"
+            onClick={() => {
+              setActionWarning(null)
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {snapshot?.degraded && (
         <div className="banner banner-warn">部分字段无法解析，已按安全值降级显示</div>
       )}
@@ -167,6 +191,9 @@ export function App({ store, onAddTask, onAddFileTask, onRowActions }: AppProps)
         stale={offline}
         onActionError={(message) => {
           setActionError(message)
+        }}
+        onActionWarning={(message) => {
+          setActionWarning(message)
         }}
       />
 

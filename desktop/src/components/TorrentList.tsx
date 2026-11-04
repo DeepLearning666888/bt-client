@@ -24,7 +24,8 @@ export const DEFAULT_OVERSCAN = 6
 export interface TorrentActions {
   pause: (infohash: string) => Promise<void>
   resume: (infohash: string) => Promise<void>
-  remove: (infohash: string, deleteFiles: boolean) => Promise<void>
+  /** 返回 null = 干净完成；返回字符串 = 任务删了但有没做成的事（如文件被占用） */
+  remove: (infohash: string, deleteFiles: boolean) => Promise<string | null>
 }
 
 export interface TorrentListProps {
@@ -39,6 +40,8 @@ export interface TorrentListProps {
   actions?: TorrentActions
   /** 动作失败时往上抛一句人话，由上层决定显示在哪 */
   onActionError?: (message: string) => void
+  /** 动作成功但有没做成的事（当前唯一来源：文件被占用，没删掉） */
+  onActionWarning?: (message: string) => void
   /** 数据已停止更新（引擎离线）。速率属于瞬时量，此时不再显示数字；
    * 动作按钮禁用 —— 点了必然失败，那就别让人点。 */
   stale?: boolean
@@ -142,6 +145,7 @@ export function TorrentList({
   onScrollTopChange,
   actions,
   onActionError,
+  onActionWarning,
   stale = false,
 }: TorrentListProps) {
   const [innerScrollTop, setInnerScrollTop] = useState(0)
@@ -162,12 +166,19 @@ export function TorrentList({
   }
 
   /** 把单个任务标成「进行中」。同一任务连点两下时第二次直接忽略 ——
-   * 双击删除会把「确认」变成两次请求。 */
-  const run = async (infohash: string, task: () => Promise<void>): Promise<void> => {
+   * 双击删除会把「确认」变成两次请求。
+   *
+   * 任务返回的字符串是「部分完成」的说明（任务删了但文件没删掉），走警告通道；
+   * 抛异常才是失败。两者不能混：显示成失败会让用户以为任务还在。 */
+  const run = async (
+    infohash: string,
+    task: () => Promise<string | null | void>,
+  ): Promise<void> => {
     if (busy.has(infohash)) return
     setBusy((prev) => new Set(prev).add(infohash))
     try {
-      await task()
+      const warning = await task()
+      if (typeof warning === 'string' && warning !== '') onActionWarning?.(warning)
     } catch (failure) {
       onActionError?.(failure instanceof Error ? failure.message : String(failure))
     } finally {
@@ -190,8 +201,11 @@ export function TorrentList({
     if (actions === undefined || confirming === null) return
     const target = confirming
     void run(target.infohash, async () => {
-      await actions.remove(target.infohash, deleteFiles)
+      const warning = await actions.remove(target.infohash, deleteFiles)
+      // 有 warning 也算成功（任务确实删了），所以要关对话框；
+      // 只有抛异常才留着 —— 那种情况任务可能还在，关掉会让人以为删掉了。
       setConfirming(null)
+      return warning
     })
   }
 

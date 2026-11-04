@@ -185,3 +185,45 @@ describe('操作请求契约', () => {
     await expect(removeTorrent(CONFIG, IH, false)).rejects.toThrow('超时')
   })
 })
+
+describe('删除的部分完成（任务删了但文件没删掉）', () => {
+  it('响应带 warning 时作为返回值交给调用方，不当成失败', async () => {
+    // 引擎实测：文件被别的程序占着时它删不掉，但任务确实移除了。
+    // 这里返回 200 + warning。当失败抛出去会让用户以为任务还在，
+    // 静默吞掉会让用户以为磁盘空间回来了 —— 都不对，得原样往上传。
+    stubFetch(200, JSON.stringify({ removed: IH, warning: '文件没能删掉，可能正被其他程序占用：C://x.bin' }))
+    const warning = await removeTorrent(CONFIG, IH, true)
+    expect(warning).toBe('文件没能删掉，可能正被其他程序占用：C://x.bin')
+  })
+
+  it('没有 warning 字段时返回 null', async () => {
+    stubFetch(200, JSON.stringify({ removed: IH }))
+    expect(await removeTorrent(CONFIG, IH, true)).toBeNull()
+  })
+
+  it('warning 是空串或非字符串时按「没有」处理', async () => {
+    for (const body of [
+      JSON.stringify({ removed: IH, warning: '' }),
+      JSON.stringify({ removed: IH, warning: '   ' }),
+      JSON.stringify({ removed: IH, warning: 42 }),
+      JSON.stringify({ removed: IH, warning: null }),
+    ]) {
+      stubFetch(200, body)
+      expect(await removeTorrent(CONFIG, IH, true)).toBeNull()
+    }
+  })
+
+  it('响应体不是 JSON 时也不炸，按干净完成处理', async () => {
+    // 正常情况引擎给 JSON；但中间有代理、或未来改了响应格式时，
+    // 「删成功了但读不出警告」不该被当成删除失败
+    stubFetch(200, 'not json at all')
+    expect(await removeTorrent(CONFIG, IH, true)).toBeNull()
+  })
+
+  it('暂停/继续没有这个返回值，仍然是 void', async () => {
+    stubFetch(200, JSON.stringify({ ok: true }))
+    // 类型上就是 void，这里断言运行时也不会漏出内容
+    expect(await pauseTorrent(CONFIG, IH)).toBeUndefined()
+    expect(await resumeTorrent(CONFIG, IH)).toBeUndefined()
+  })
+})

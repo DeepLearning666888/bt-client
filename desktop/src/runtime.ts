@@ -115,9 +115,12 @@ export function createEngineRuntime(
       await resumeTorrent(config, infohash)
       void poller.tick()
     },
+    // remove 的返回值原样透传：非 null 表示「任务删了但文件没删掉」，
+    // 界面要把它显示成警告而不是丢掉。
     remove: async (infohash, deleteFiles) => {
-      await removeTorrent(config, infohash, deleteFiles)
+      const warning = await removeTorrent(config, infohash, deleteFiles)
       void poller.tick()
+      return warning
     },
   }
 

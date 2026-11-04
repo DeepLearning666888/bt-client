@@ -61,6 +61,7 @@
 - [AC-12] /state 内含 nat 字段且结构符合 natdiag 快照契约 | 判: `python engine/tests/t_nat_field.py` 退出码 0
 - [AC-13] 跨源请求可被浏览器放行：OPTIONS 预检返回 204 且带全套 CORS 头，正常与错误响应同样带跨源许可，方法白名单不放宽 | 判: `python engine/tests/t_cors.py` 退出码 0，12 项检查全通过
 - [AC-14] 非 ASCII 数据目录下端点文件是合法 UTF-8，且 `data_dir` 字段逐字符等于真实路径 | 判: `python engine/tests/t_path_encoding.py` 退出码 0（纯中文 / 中文+空格 / 混合符号三种目录，各 8 项检查）
+- [AC-15] `delete_files` 的真实语义：删文件时文件真的消失、不删时文件真的留着、删不掉时**响应里带 warning 说明及具体路径** | 判: `python engine/tests/t_delete_files.py` 退出码 0，25 项检查（三个本地种子各校验到 seeding → A `delete_files=1` 断言文件消失且无 warning → B `delete_files=0` 断言文件仍在 → C 用裸句柄占住文件后 `delete_files=1`，断言任务仍被移除、响应带 warning、warning 含「占用」与该文件名、文件确实还在、耗时 < 12s → D 松开句柄后同一路径可正常删除，证明路径没算错）
 
 ## 不做范围
 

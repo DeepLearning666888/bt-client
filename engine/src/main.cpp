@@ -150,7 +150,13 @@ http::Response route(eng::Engine& engine, std::string const& version, std::strin
             }
             bool del_files = req.query_int("delete_files", 0) != 0;
             if (!engine.remove_torrent(ih, del_files, err)) return from_error(err, "remove_failed");
-            return http::Response::ok("{\"removed\":" + json::quote(lower(ih)) + "}");
+            // err 在成功路径上非空，表示「任务移除了，但有件事没做成」——
+            // 目前唯一来源是文件删不掉。仍然是 200（任务确实没了），
+            // 用 warning 字段让界面能说清「磁盘上的东西还在」。
+            std::string body = "{\"removed\":" + json::quote(lower(ih));
+            if (!err.empty()) body += ",\"warning\":" + json::quote(err);
+            body += "}";
+            return http::Response::ok(body);
         }
         if (action == "pause" || action == "resume") {
             if (req.method != "POST") {

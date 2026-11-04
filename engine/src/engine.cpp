@@ -725,6 +725,18 @@ bool Engine::remove_torrent(std::string const& raw_ih, bool delete_files, std::s
                 e = "not_found: 任务不存在";
                 return false;
             }
+
+            // remove_torrent 之后 handle 立即失效，所以路径要先取出来。
+            // 没有元数据的任务（磁力刚加上还没抓到 info）没有文件，跳过。
+            std::string target;
+            if (delete_files && it->second.has_handle) {
+                auto st = it->second.handle.status(lt::torrent_handle::query_name |
+                                                   lt::torrent_handle::query_save_path);
+                if (!st.name.empty() && !st.save_path.empty()) {
+                    target = (fs::path(st.save_path) / st.name).string();
+                }
+            }
+
             if (it->second.has_handle) {
                 if (delete_files) {
                     impl_->session->remove_torrent(it->second.handle, lt::session::delete_files);
@@ -736,9 +748,32 @@ bool Engine::remove_torrent(std::string const& raw_ih, bool delete_files, std::s
             fs::remove(impl_->resume_file(ih), ec);
             fs::remove(impl_->magnet_file(ih), ec);
             impl_->entries.erase(ih);
+
+            // libtorrent 的 delete_files 对失败保持沉默：文件被别的程序占着时它照样
+            // 一声不响地「成功」，任务消失、文件还在磁盘上 —— 用户以为删干净了，
+            // 空间却没回来。这里补一次校验，把静默失败变成能显示给用户的警告。
+            //
+            // 顺序上不能自己先删：libtorrent 关文件句柄是异步的，抢在它前面删大概率
+            // 撞上自己还没释放的句柄，把「被别的程序占用」误报成失败。所以先等它删完。
+            if (!target.empty()) {
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                while (fs::exists(target) && std::chrono::steady_clock::now() < deadline) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+                }
+                if (fs::exists(target)) {
+                    // 兜底再自己删一次：此时句柄理应已经释放，删不掉就是真被占了
+                    fs::remove_all(target, ec);
+                    if (ec || fs::exists(target)) {
+                        e = "任务已移除，但文件没能删掉，可能正被其他程序占用：" + target;
+                        // 仍然算成功 —— 任务确实没了。这句话作为「部分完成」的警告回给调用方。
+                    }
+                }
+            }
             return true;
         },
-        err);
+        // 比默认 3s 宽：上面最多等 2s 让 libtorrent 删完，再加上兜底删除，
+        // 默认超时会在大文件上误报「引擎响应超时」。
+        err, 6000);
 }
 
 }  // namespace eng

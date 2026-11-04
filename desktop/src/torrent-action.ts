@@ -68,8 +68,26 @@ export function describeActionFailure(kind: ActionKind, status: number, body: un
   return detail === null ? `操作失败（HTTP ${status}）` : `操作失败（HTTP ${status}）：${detail}`
 }
 
-/** 超时上限：本机回环，正常是毫秒级。10s 只用来兜「引擎卡住但端口没关」。 */
+/** 超时上限：本机回环，正常是毫秒级。10s 只用来兜「引擎卡住但端口没关」。
+ *
+ * 删除单独放宽到 15s：引擎在「连文件一起删」时会等文件真的消失才返回
+ * （文件被别的程序占着时要等满等待窗才判定失败），本来就比暂停/继续慢。 */
 const ACTION_TIMEOUT_MS = 10_000
+const REMOVE_TIMEOUT_MS = 15_000
+
+/** 从成功响应里读 `warning`。
+ *
+ * 引擎在「任务删掉了，但磁盘文件删不掉」时给这个字段 —— 文件被别的程序占着是
+ * 现实里会发生的事（杀软在扫、播放器开着）。此时 HTTP 200 是对的（任务确实没了），
+ * 但静默返回会让用户以为磁盘空间回来了。 */
+async function readWarning(response: Response): Promise<string | null> {
+  const body: unknown = await response.json().catch(() => null)
+  if (typeof body !== 'object' || body === null) return null
+  const warning = (body as Record<string, unknown>)['warning']
+  if (typeof warning !== 'string') return null
+  const trimmed = warning.trim()
+  return trimmed === '' ? null : trimmed
+}
 
 async function call(
   config: EngineConfig,
@@ -77,7 +95,7 @@ async function call(
   path: string,
   method: 'POST' | 'DELETE',
   timeoutMs: number,
-): Promise<void> {
+): Promise<string | null> {
   const controller = new AbortController()
   const timer = setTimeout(() => {
     controller.abort()
@@ -97,7 +115,7 @@ async function call(
     clearTimeout(timer)
   }
 
-  if (response.ok) return
+  if (response.ok) return readWarning(response)
   // 错误体不一定是 JSON（502 之类可能是 HTML），解析失败不该盖掉状态码信息
   const body: unknown = await response.json().catch(() => null)
   throw new Error(describeActionFailure(kind, response.status, body))
@@ -122,14 +140,18 @@ export async function resumeTorrent(
 }
 
 /** 删除任务。`deleteFiles` 必须显式给 —— 不依赖引擎默认值，
- * 因为「默认删不删磁盘文件」这件事一旦变了，用户的数据就没了。 */
+ * 因为「默认删不删磁盘文件」这件事一旦变了，用户的数据就没了。
+ *
+ * 返回值：null 表示干净完成；字符串表示「任务删了，但有件事没做成」
+ * （目前只有一种：文件被占用，没能从磁盘删掉）。调用方应当显示它而不是丢掉 ——
+ * 静默丢掉的后果是用户以为空间回来了。 */
 export async function removeTorrent(
   config: EngineConfig,
   infohash: string,
   deleteFiles: boolean,
-  timeoutMs = ACTION_TIMEOUT_MS,
-): Promise<void> {
+  timeoutMs = REMOVE_TIMEOUT_MS,
+): Promise<string | null> {
   const ih = normalizeInfohash(infohash)
   const query = deleteFiles ? '?delete_files=1' : '?delete_files=0'
-  await call(config, 'remove', `/torrents/${ih}${query}`, 'DELETE', timeoutMs)
+  return call(config, 'remove', `/torrents/${ih}${query}`, 'DELETE', timeoutMs)
 }

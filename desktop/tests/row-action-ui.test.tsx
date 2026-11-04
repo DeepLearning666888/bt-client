@@ -8,6 +8,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { App } from '../src/App'
+import { EngineStore } from '../src/store'
 import { TorrentList, type TorrentActions } from '../src/components/TorrentList'
 import type { Torrent, TorrentState } from '../src/api'
 
@@ -37,7 +39,7 @@ function makeActions(over: Partial<TorrentActions> = {}): TorrentActions {
   return {
     pause: vi.fn(() => Promise.resolve()),
     resume: vi.fn(() => Promise.resolve()),
-    remove: vi.fn(() => Promise.resolve()),
+    remove: vi.fn(() => Promise.resolve(null)),
     ...over,
   }
 }
@@ -230,5 +232,131 @@ describe('失败处理', () => {
       expect(onActionError).toHaveBeenCalledWith('引擎处理失败：磁盘忙')
     })
     expect(screen.getByTestId('remove-confirm')).toBeTruthy()
+  })
+})
+
+describe('删除的部分完成（任务删了但文件没删掉）', () => {
+  it('有警告时走警告通道，不走错误通道', async () => {
+    // 这条例子的价值在于「两者不能混」：显示成错误会让用户以为任务还在，
+    // 而任务其实已经删了 —— 用户会去列表里找，找不到，然后困惑。
+    const onActionError = vi.fn()
+    const onActionWarning = vi.fn()
+    const remove = vi.fn(() => Promise.resolve('文件没能删掉，可能正被其他程序占用：C://x.bin'))
+    render(
+      <TorrentList
+        torrents={[makeTorrent()]}
+        actions={makeActions({ remove })}
+        onActionError={onActionError}
+        onActionWarning={onActionWarning}
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId('row-remove'))
+    fireEvent.click(screen.getByTestId('remove-confirm'))
+
+    await waitFor(() => {
+      expect(onActionWarning).toHaveBeenCalledWith('文件没能删掉，可能正被其他程序占用：C://x.bin')
+    })
+    expect(onActionError).not.toHaveBeenCalled()
+  })
+
+  it('有警告时确认框照样关掉（任务确实删了）', async () => {
+    const onActionWarning = vi.fn()
+    const remove = vi.fn(() => Promise.resolve('文件还在'))
+    render(
+      <TorrentList
+        torrents={[makeTorrent()]}
+        actions={makeActions({ remove })}
+        onActionWarning={onActionWarning}
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId('row-remove'))
+    fireEvent.click(screen.getByTestId('remove-confirm'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('remove-confirm')).toBeNull()
+    })
+  })
+
+  it('返回 null 时不产生任何提示', async () => {
+    const onActionWarning = vi.fn()
+    const onActionError = vi.fn()
+    render(
+      <TorrentList
+        torrents={[makeTorrent()]}
+        actions={makeActions()}
+        onActionError={onActionError}
+        onActionWarning={onActionWarning}
+      />,
+    )
+
+    fireEvent.click(screen.getByTestId('row-remove'))
+    fireEvent.click(screen.getByTestId('remove-confirm'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('remove-confirm')).toBeNull()
+    })
+    expect(onActionWarning).not.toHaveBeenCalled()
+    expect(onActionError).not.toHaveBeenCalled()
+  })
+})
+
+describe('App 层的警告条', () => {
+  /** 渲染完整 App 的原因：「有警告」这件事最终要落到用户眼前的那条横幅上。
+   *  只测 TorrentList 的话，回调被调用了却没有地方显示，等于半条链路。 */
+  function storeWith(torrent: Torrent): EngineStore {
+    const store = new EngineStore()
+    store.applySnapshot({
+      seq: 3,
+      tsMs: 0,
+      count: 1,
+      torrents: [torrent],
+      degraded: false,
+    })
+    return store
+  }
+
+  it('删除返回警告时显示黄色提示条，且不显示成错误', async () => {
+    const store = storeWith(makeTorrent({ state: 'seeding', progress: 1 }))
+    const remove = vi.fn(() => Promise.resolve('文件没能删掉，可能正被其他程序占用：C://x.bin'))
+    render(<App store={store} onRowActions={makeActions({ remove })} />)
+
+    fireEvent.click(screen.getByTestId('row-remove'))
+    fireEvent.click(screen.getByTestId('remove-confirm'))
+
+    const banner = await screen.findByTestId('banner-warning')
+    expect(banner.textContent).toContain('文件没能删掉')
+    // 错误条用的是 role="alert"，警告条是 role="status" —— 差这一级，
+    // 屏幕阅读器和用户对「要不要重试」的判断都不同
+    expect(banner.getAttribute('role')).toBe('status')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('警告条可以手动关掉', async () => {
+    const store = storeWith(makeTorrent({ state: 'seeding', progress: 1 }))
+    const remove = vi.fn(() => Promise.resolve('文件还在'))
+    render(<App store={store} onRowActions={makeActions({ remove })} />)
+
+    fireEvent.click(screen.getByTestId('row-remove'))
+    fireEvent.click(screen.getByTestId('remove-confirm'))
+    await screen.findByTestId('banner-warning')
+
+    fireEvent.click(screen.getByTestId('warning-dismiss'))
+    expect(screen.queryByTestId('banner-warning')).toBeNull()
+  })
+
+  it('失败走红条，成功无警告则一条都没有', async () => {
+    const store = storeWith(makeTorrent({ state: 'seeding', progress: 1 }))
+    const remove = vi.fn(() => Promise.reject(new Error('引擎处理失败')))
+    render(<App store={store} onRowActions={makeActions({ remove })} />)
+
+    fireEvent.click(screen.getByTestId('row-remove'))
+    fireEvent.click(screen.getByTestId('remove-confirm'))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('引擎处理失败')
+    })
+    expect(screen.queryByTestId('banner-warning')).toBeNull()
   })
 })

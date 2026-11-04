@@ -117,6 +117,12 @@ cmd = "python engine/tests/t_cors.py"
 ac = "AC-14"
 cmd = "python engine/tests/t_path_encoding.py"
 
+# delete_files 的真实语义。AC-07 只验「任务从 /state 消失」，文件系统从来没验过。
+# 这条会造三个真文件、真占用其中一个，看文件到底删没删掉。
+[[units.engine-service.evidence]]
+ac = "AC-15"
+cmd = "python engine/tests/t_delete_files.py"
+
 
 # ------------------------------------------------------------- M2 桌面端
 # 前端命令全部走 toolchain/build.py desktop：gate.py 用 shell=False 执行，
@@ -246,6 +252,16 @@ cmd = "python toolchain/build.py desktop --test poller"
 [[units.desktop.evidence]]
 ac = "AC-26"
 cmd = "python desktop/tests/t_engine_hang.py"
+
+# 删除的「部分完成」。AC-16/AC-18 验的是「发出去的东西对不对」，
+# 这两条验「引擎说文件没删掉时，前端能不能把这句话传到用户眼前」。
+[[units.desktop.evidence]]
+ac = "AC-27"
+cmd = "python toolchain/build.py desktop --test row-action"
+
+[[units.desktop.evidence]]
+ac = "AC-28"
+cmd = "python toolchain/build.py desktop --test row-action-ui"
 
 # ------------------------------------------------- 跨机测试包（P1 渲染与帧率）
 # 这是「界面不卡」从断言变成数据的那个单元。M2a 的四条性能约束全在 jsdom 里判定，
