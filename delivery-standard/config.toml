@@ -278,10 +278,17 @@ cmd = "python toolchain/build.py desktop --test row-action-ui"
 
 # ------------------------------------------------------------- M2b Tauri 壳
 # 顺序不能反：tauri-build 在编译期读 frontendDist，dist 不存在会直接失败。
+#
+# 引擎必须先重建：`tauri.conf.json` 把 `engine/build/engine.exe` 声明成 resource，
+# `shell build --release` 会把它复制成 `target/release/engine.exe`，壳优先加载这份副本。
+# 少了这一步，engine-service 那边刚构建的新引擎不会进壳，壳跑的是上一版二进制 ——
+# 测试照样全绿，测的却是旧代码。2026-11-04 做 AC-08 负向验证时踩到过：
+# 撤掉落盘后测试仍通过，查了半天才发现壳加载的是三小时前的 exe。
 [units.tauri-shell]
 tier = "T2"
 build = [
     "python toolchain/build.py desktop --build",
+    "python toolchain/build.py engine",
     "python toolchain/build.py shell build --release",
 ]
 
@@ -317,6 +324,18 @@ cmd = "python desktop/tests/t_shell_artifact.py"
 [[units.tauri-shell.evidence]]
 ac = "AC-07"
 cmd = "python toolchain/build.py shell test --release --test restart_takeover"
+
+# 真 exe 链路的「关了再打开」。AC-07 在 Rust 里直接调 resolve()，造不出「引擎和壳
+# 一起没了」；t_persist_crash.py 只跑引擎、t_shell_e2e.py 只跑壳，谁都不覆盖
+# 「壳起引擎 → 加任务 → 两者都被硬杀 → 重开」这条用户真正会走的路。
+# AC-08/AC-09 共用一条命令：一个脚本跑两段，判定入口是同一个退出码。
+[[units.tauri-shell.evidence]]
+ac = "AC-08"
+cmd = "python desktop/tests/t_shell_restart_e2e.py"
+
+[[units.tauri-shell.evidence]]
+ac = "AC-09"
+cmd = "python desktop/tests/t_shell_restart_e2e.py"
 
 [units.installer]
 tier = "T2"

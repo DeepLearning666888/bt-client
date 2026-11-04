@@ -49,6 +49,12 @@ M2a 交付的前端能跑，但启动方式是「先用 `launcher.py` 打印两�
 - [AC-05] 第二个实例不再拉起第二个引擎 | 判: `python desktop/tests/t_shell_single.py` 退出码 0（两个壳进程 + 恰好一个 `engine.exe`）
 - [AC-06] release 产物可双击运行且内嵌前端资源 | 判: `cargo build --release --manifest-path desktop/src-tauri/Cargo.toml` 退出码 0，且 `target/release/btclient-shell.exe` 存在且 > 3 MB（小于此值说明前端资源没打进二进制）
 - [AC-07] 上次被强杀留下的孤儿引擎（进程还在、`engine.lock` 还被占）能被重新接上，而不是「点图标没反应」 | 判: `python toolchain/build.py shell test --release --test restart_takeover` 退出码 0，覆盖「端点完好 → 复用同一端口且不持有 child」「引擎只是忙得没响应 → 拉起失败后回头接管（决策必须是 reuse，不能是 respawn）」「端点地址已失效 → 报可操作错误且端点文件被还原」三情形
+- [AC-08] 引擎与壳**双双**被硬杀（无收尾机会）后重开，界面正常打开且任务还在 | 判: `python desktop/tests/t_shell_restart_e2e.py` 退出码 0（A 段：起真壳 → 加任务 → `taskkill /F` 引擎 → `taskkill /F` 壳 → 重开；断言重开后前端取到首帧、任务 1 条、infohash 与状态与硬杀前一致、引擎 pid 已变即任务确实从磁盘恢复）
+- [AC-09] 壳被硬杀但引擎仍活着时，重开走复用而不是另起 | 判: `python desktop/tests/t_shell_restart_e2e.py` 退出码 0（B 段：只杀壳 → 断言引擎端口仍在 → 重开；断言决策为 `reuse`、引擎 pid 前后相同、任务仍在。与 AC-07 的区别是这条跑的是真 exe 链路，AC-07 是 Rust 内直接调 `resolve()`）
+
+> AC-07 与 AC-08/AC-09 各测一半，缺一不可：AC-07 在 Rust 里桩出「端点完好但探测失败」，
+> 造不出「引擎和壳一起没了」；AC-08/AC-09 走真进程，但依赖不了那么细的时序。
+> 三个都通过才说明「用户关掉再打开」这条路真的通。
 
 ## 不做范围
 
@@ -118,6 +124,15 @@ M2a 交付的前端能跑，但启动方式是「先用 `launcher.py` 打印两�
   Tauri 理论上会把用户引导到微软下载页，实际表现未知。
 - **首次启动耗时未测。** `SPAWN_TIMEOUT` 是 20s 上限，实测复用路径 <1s、全新 spawn
   约 1–2s，但没有系统测量冷启动（磁盘缓存空、WebView2 首次初始化）。
+- **（2026-11-04 已验，AC-08/AC-09）「关了再打开」的真 exe 链路**：起真壳 → 加任务 →
+  `taskkill /F` 硬杀引擎 → 再硬杀壳 → 重开，任务仍在；以及只杀壳后重开走 `reuse`
+  接管同一个引擎 pid。两段都在 `desktop/tests/t_shell_restart_e2e.py` 里，进了 `gate all`。
+  **仍未验证的是它和界面的关系**：这条走 API 加任务，用户点「+ 添加任务」那条路由
+  `add-task-live.test.tsx` 覆盖，两段拼起来才等价 —— 但没有一次是「真人点界面」跑完
+  这条链路的，所以 C29 在真机清单里保留了「抽查一次」而不是删除。
+  另：补测时发现 `target/release/engine.exe` 是 `shell build --release` 时的资源副本，
+  只重建引擎不会刷新它，壳会静默加载旧二进制。已在 `tauri-shell` 的 build 里加
+  `build.py engine`，并让脚本自身比对哈希、不一致直接退出 4。
 - **（2026-11-04 已验，AC-07）壳被强杀后重启的接管**：补测试时发现两个真缺陷 ——
   ① `spawn` 起手删掉端点文件，新引擎被孤儿的实例锁挡住（退出码 2）时，旧端点已经没了，
   下次启动重复同样过程，用户只能去任务管理器手杀进程；② `resolve` 的 `Respawn` 分支
