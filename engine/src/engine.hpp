@@ -42,6 +42,10 @@ public:
     std::string state_json() const;
     std::uint64_t state_seq() const;
 
+    // DHT 诊断快照，独立于 /state（不参与 seq，见 engine.cpp 里的说明）。
+    // 会话刚启动时为空串，调用方按「还没采到」处理。
+    std::string dht_json() const;
+
     bool add_magnet(std::string const& uri, std::string& infohash, std::string& err);
     bool add_torrent_bytes(std::string const& bytes, std::string& infohash, std::string& err);
     bool pause(std::string const& infohash, std::string& err);

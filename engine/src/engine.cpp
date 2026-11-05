@@ -9,6 +9,7 @@
 #include <libtorrent/magnet_uri.hpp>
 #include <libtorrent/read_resume_data.hpp>
 #include <libtorrent/session.hpp>
+#include <libtorrent/session_status.hpp>
 #include <libtorrent/settings_pack.hpp>
 #include <libtorrent/sha1_hash.hpp>
 #include <libtorrent/torrent_handle.hpp>
@@ -136,6 +137,11 @@ struct Engine::Impl {
     std::uint64_t seq = 0;
     std::string state_json;
     std::string last_content;
+
+    // ---- DHT 诊断（独立于 /state，见 on_dht_stats 的注释）
+    // 只由 worker 线程写；dht_json 受 state_mutex 保护给 HTTP 线程读。
+    std::string dht_json;
+    std::int64_t dht_requested_ms = 0;
 
     std::string http_listen = "-";
     std::int64_t started_ms = 0;
@@ -344,6 +350,8 @@ struct Engine::Impl {
             } else if (auto* meta = lt::alert_cast<lt::metadata_received_alert>(a)) {
                 // 有了元数据立刻存 resume，这样重启不依赖 DHT 重新取元数据
                 meta->handle.save_resume_data(lt::torrent_handle::save_info_dict);
+            } else if (auto* dht = lt::alert_cast<lt::dht_stats_alert>(a)) {
+                on_dht_stats(dht);
             } else if (auto* err = lt::alert_cast<lt::torrent_error_alert>(a)) {
                 entries[hex_of(err->handle.info_hashes())].last_error = err->error.message();
             } else if (auto* gone = lt::alert_cast<lt::torrent_removed_alert>(a)) {
@@ -463,6 +471,55 @@ struct Engine::Impl {
         }
     }
 
+    // DHT 状态单独一份快照，不并进 /state。
+    //
+    // 理由：
+    //   1. 采样要走 alert 往返，2 秒一次才拿得到有效值。塞进每 100ms 重建的快照里，
+    //      等于把一个 2 秒级的信号塞进 10Hz 的管道。
+    //   2. 它只用于诊断，不被界面消费。混进「界面要渲染的状态」这份契约里，
+    //      以后改 /state 结构时会被误伤。
+    //
+    // 原本还有一条「避免空闲时重渲」的理由，实测不成立 —— /state 的 content 里含
+    // natdiag 的 sampled_seconds，它每秒递增，所以 seq 空载时也每秒都在涨（实测
+    // 1→3→4→5）。那条假设已删除，见 t_dht_status 里对 seq 的说明。
+    //
+    // 为什么不用 session::status()：整个 session_status 结构被
+    // `#if TORRENT_ABI_VERSION == 1` 包住，本构建是 ABI v2，那个类型根本不存在
+    // （和 ignore_limits_on_local_network 是同一个坑）。ABI v2 的观测入口是
+    // post_dht_stats() + dht_stats_alert。
+    //
+    // 存在的理由：在此之前引擎完全不暴露 DHT 状态，于是「无 tracker 的种子零 peer」
+    // 只能从外部旁证，无法区分「DHT 没起来」和「DHT 起来了但这个 infohash 上没人」。
+    void maybe_request_dht_stats() {
+        std::int64_t now = platform::epoch_ms();
+        if (now - dht_requested_ms < 2000) return;
+        dht_requested_ms = now;
+        session->post_dht_stats();
+    }
+
+    void on_dht_stats(lt::dht_stats_alert const* alert) {
+        std::int64_t table_nodes = 0;
+        std::int64_t replacements = 0;
+        for (auto const& bucket : alert->routing_table) {
+            table_nodes += bucket.num_nodes;
+            replacements += bucket.num_replacements;
+        }
+
+        std::string out;
+        out += "{\"running\":";
+        out += session->is_dht_running() ? "true" : "false";
+        out += ",\"routing_table_nodes\":" + std::to_string(table_nodes);
+        out += ",\"replacements\":" + std::to_string(replacements);
+        out += ",\"buckets\":" + std::to_string(alert->routing_table.size());
+        out += ",\"active_requests\":" + std::to_string(alert->active_requests.size());
+        out += ",\"node_id\":" + json::quote(hex_of(alert->nid));
+        out += ",\"ts_ms\":" + std::to_string(platform::epoch_ms());
+        out += "}";
+
+        std::lock_guard<std::mutex> lock(state_mutex);
+        dht_json = std::move(out);
+    }
+
     // ------------------------------------------------------------------- 循环
     void tick() {
         std::vector<lt::alert*> alerts;
@@ -473,6 +530,7 @@ struct Engine::Impl {
 
         collector.set_elapsed(static_cast<int>((platform::epoch_ms() - started_ms) / 1000));
         rebuild_state();
+        maybe_request_dht_stats();
     }
 
     void loop() {
@@ -634,6 +692,11 @@ std::string Engine::state_json() const {
 std::uint64_t Engine::state_seq() const {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
     return impl_->seq;
+}
+
+std::string Engine::dht_json() const {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    return impl_->dht_json;
 }
 
 bool Engine::add_magnet(std::string const& uri, std::string& infohash, std::string& err) {

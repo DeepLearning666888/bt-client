@@ -118,6 +118,17 @@ http::Response route(eng::Engine& engine, std::string const& version, std::strin
         return http::Response::ok(std::move(body));
     }
 
+    // ---- GET /dht
+    // 只读诊断：DHT 到底 bootstrap 成功了没有。不参与 /state 的 seq（见 engine.cpp）。
+    if (req.path == "/dht") {
+        if (req.method != "GET") return http::Response::error(405, "method_not_allowed", "请用 GET");
+        std::string body = engine.dht_json();
+        if (body.empty()) {
+            return http::Response::error(503, "dht_not_ready", "DHT 状态尚未采到");
+        }
+        return http::Response::ok(std::move(body));
+    }
+
     // ---- POST /torrents
     if (req.path == "/torrents") {
         if (req.method != "POST") return http::Response::error(405, "method_not_allowed", "请用 POST");

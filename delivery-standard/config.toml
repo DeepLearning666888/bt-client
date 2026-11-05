@@ -141,6 +141,13 @@ cmd = "python engine/tests/t_total_bytes.py"
 ac = "AC-18"
 cmd = "python engine/tests/t_local_swarm.py"
 
+# DHT 可观测性。在此之前引擎完全不暴露 DHT 状态，「无 tracker 的种子零 peer」
+# 无法区分「DHT 没起来」与「DHT 起来了但这个 infohash 上没人」—— 两种处置完全不同。
+# 不能读 session::status()：那个结构被 ABI v1 条件编译包住，本构建是 ABI v2。
+[[units.engine-service.evidence]]
+ac = "AC-19"
+cmd = "python engine/tests/t_dht_status.py"
+
 
 # ------------------------------------------------------------- M2 桌面端
 # 前端命令全部走 toolchain/build.py desktop：gate.py 用 shell=False 执行，

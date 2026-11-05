@@ -69,6 +69,7 @@
 - [AC-16] 任务能活过「没走优雅退出」的死亡：加完任务立刻硬杀引擎，重启后任务仍在且状态一致；进度没变化时不重复写盘 | 判: `python engine/tests/t_persist_crash.py` 退出码 0，11 项检查（A 加种子 → 断言 resume 文件已经存在（不是等到退出才写）→ `taskkill /F` → 重启断言仍是 1 条且状态一致；B 加无元数据的磁力 → 断言落盘 → 硬杀重启后两条都在；C 把周期落盘缩到 200ms（`--periodic-save-ms`），等 1.5 秒断言 resume 文件 size 与 mtime 都没变）
 - [AC-17] `/state` 的 `total_bytes` 在**已完成**的任务上必须等于真实大小，不能塌成 0；无元数据时必须如实给 0 | 判: `python engine/tests/t_total_bytes.py` 退出码 0，16 项检查（A 下载中态 `total_bytes` 等于 payload 大小且 `done_bytes=0` → B 把完整内容预置进 `save_path`、删任务重加让它自己校验到 seeding，断言 `total_bytes` 与 `done_bytes` 都等于 payload 大小且 `total_bytes >= done_bytes` → C 无元数据磁力 `has_metadata=false` 且 `total_bytes=0`）
 - [AC-18] 两个引擎之间能**真传数据**：从零开始的客户端靠 peer 拿到完整 32 MiB 并落盘，内容逐字节一致；没有 peer 时一字节都拿不到 | 判: `python engine/tests/t_local_swarm.py` 退出码 0，26 项检查（进程内 HTTP tracker 促成会合，两端都带 `--no-network` 以隔离会合途径 → A 种子端预置完整内容校验到 seeding 且向 tracker 上报 → B 下载端在独立目录加同一份种子、断言两端 `save_path` 不同 → C 采样 17+ 个中间态、`done_bytes` 序列非递减、最终等于 32 MiB → D 下载端文件逐字节等于源且 mtime 落在本次测试期间 → E 关掉两端后同样的种子等满 8 秒仍是 0 字节）
+- [AC-19] `GET /dht` 如实反映 DHT 真实状态：开启时报告运行中且 `node_id` 非全 0，`--no-network` 时必须报告未运行、桶数为 0、`node_id` 全 0（不许编一个假 ID）；DHT 诊断字段不得混进 `/state` | 判: `python engine/tests/t_dht_status.py` 退出码 0，18 项检查（A 等首份快照（≤15s），断言 `running=true`、`node_id` 是 40 位小写 hex 且非全 0、`buckets>=1`（证明不只是开关打开了，内部路由表结构真的建起来了）、`routing_table_nodes`/`replacements`/`active_requests` 是非负整数、`ts_ms` 落在近 60 秒内（快照是活的）→ B `/state` 顶层不含 `dht`/`dht_nodes`/`dht_routing_table`/`node_id`，`nat` 块里也不夹带 → C `--no-network` 下 `running=false`、`buckets=0`、`node_id` 全 0）
 
 ## 不做范围
 
@@ -126,9 +127,23 @@
   结论：本机网络下 DHT 无法 bootstrap，无 tracker 的种子必然零 peer。**这只能说明
   本机环境，不能说明引擎的 DHT 实现有问题**，也不能说明它在别的网络下可用 ——
   两种都还没验。
-  **要真正验，缺一样东西：引擎不暴露 DHT 节点数。** `/state` 里没有 `dht_nodes`，
-  所以「引擎到底 bootstrap 成功没有」只能从外部旁证，无法直接观测。加一个只读诊断
-  字段就能一次解决，但那属于新增 API，需要单独决定。
+  **（2026-11-05 补齐观测手段，AC-19）新增 `GET /dht` 只读诊断端点后已实测：**
+  起引擎连续采样 120 秒，`routing_table_nodes` **始终为 0**，`buckets=1` 说明路由表
+  结构建了、`active_requests` 从 1 掉到 0 说明查询发出过又放弃。也就是说 DHT 进程
+  起来了、也在尝试，但**一个节点都没连上**。这把两种可能分开了：
+  「DHT 起来了但这个 infohash 上没人」**已被排除**，剩下的就是 bootstrap 失败 ——
+  与上面查到的 DNS 污染一致。
+  仍未验的仍是同一条：**换一个 DHT 可达的网络，验证引擎的 DHT 实现本身能不能用**。
+  本机无论如何都验不了。
+- **`/state` 的 `seq` 空载时也每秒都在涨，「内容没变就不涨」的设计意图是失效的。**
+  实测空载连续读 4 次：`seq` 为 1→3→4→5。根因是 `content` 里拼了 natdiag 的快照，
+  其中 `sampled_seconds` 每秒递增，`verdict_text` 在 15 秒内也跟着变（「只采样了
+  N 秒」）。于是前端靠 `?since=N` 跳过重绘的优化从来没生效过。
+  影响有限（空载时列表本来就空、有任务时本来就在变），**本轮未修**：要修得决定
+  「`sampled_seconds` 该不该参与变化判定」，而它是 natdiag 的对外契约字段，动它
+  要连带改那一侧。解锁条件：开始做界面性能相关的工作时，或 natdiag 规格要大改时。
+  记在这里是因为它已经骗过我一次 —— 写 AC-19 时我拿「空闲 seq 不变」当判据，
+  测试直接红了，才发现前提是假的。
 - **（2026-11-05 已验，AC-18）两个引擎之间能真传数据。** 在此之前所有测试都是零 peer
   的：种子自己造、校验走本地磁盘、progress 要么 0 要么满，「收到别人的数据并写对」
   这件事没有任何判据碰过。现在用进程内 HTTP tracker 让两个实例会合，32 MiB 逐字节一致。
