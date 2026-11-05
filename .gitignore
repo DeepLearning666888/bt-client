@@ -73,3 +73,4 @@ handoff/CHECKLIST.md
 .workbuddy/msg-*.txt
 # 工作区内部记忆（含私有路径、本机 IP，绝不上公共仓库）
 .workbuddy/memory/
+*.obj
