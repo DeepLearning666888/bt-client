@@ -12,9 +12,19 @@
 
 A 段（C28/C29）：加任务 → 硬杀引擎 → 硬杀壳 → 重开 → 任务还在、状态一致、引擎是新进程
 B 段（C32/C33）：加任务 → 只杀壳（引擎变孤儿）→ 立刻重开 → 接管同一个引擎，任务还在
+C1/C2 段（C34）：点 × 关窗口（不是强杀），两条决策分支各测一遍
 
-两段都必须用 `taskkill /F`，不能用 WM_CLOSE：优雅退出会走 `flush_all` 和
+A/B 两段都必须用 `taskkill /F`，不能用 WM_CLOSE：优雅退出会走 `flush_all` 和
 `/shutdown`，那两条路本来就写盘，测到的不是用户真实的失败场景。
+
+C 段反过来 —— 它专门测优雅退出，因为 `lib.rs` 的 `RunEvent::Exit` 在关窗口时
+**按决策分支走两条相反的路**：
+
+    decision 是 spawn/respawn（本轮自己拉起的）→ 调 /shutdown 把引擎关掉
+    decision 是 reuse（接管别人留下的）        → 一行日志，引擎原样留着
+
+两条写在同一段 if/else 里，改动一处很容易顺手把另一处也「统一」掉。只测其中
+一条分支，另一条错了不会有任何信号。
 
 两段都在独立的 `BTCLIENT_DATA_DIR` 里跑，不碰 `%APPDATA%` 下的真实数据。
 单实例锁按数据目录区分（见 lib.rs 的 instance_key），所以不会跟正在使用的壳抢锁。
@@ -442,6 +452,232 @@ def case_b(work: Path, blob: bytes) -> None:
             proc.kill()
 
 
+def graceful_close(pid: int, label: str) -> bool:
+    """发 WM_CLOSE —— 就是用户点窗口右上角那个 ×。
+
+    `taskkill` 不带 `/F` 走的是「请这个进程的顶层窗口自己关掉」，和任务管理器的
+    「结束任务」（带 /F，TerminateProcess，没有收尾机会）不是一条路。
+    这里要的正是收尾机会：Tauri 收到窗口关闭后会跑 `RunEvent::Exit`。
+    """
+    result = subprocess.run(["taskkill", "/PID", str(pid)],
+                            capture_output=True, timeout=30)
+    ok = result.returncode == 0
+    print(f"  {'✓' if ok else '✗'} 正常关闭{label} pid={pid}（WM_CLOSE）")
+    if not ok:
+        detail = (result.stderr or result.stdout).decode("gbk", "replace").strip()
+        problems.append(f"正常关闭{label}失败：{detail}")
+    return ok
+
+
+def pid_alive(pid: int) -> bool:
+    """进程是否还活着。
+
+    不用 `tasklist` 再解析输出：中文 Windows 上那玩意儿是 GBK，而且列宽会随
+    进程名长度变，解析出来的空列表和「进程死了」长得一模一样。
+    """
+    import ctypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def wait_pid_gone(pid: int, timeout: float = 15.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not pid_alive(pid):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def wait_log_line(data_dir: Path, offset: int, needle: str,
+                  timeout: float = 10.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if needle in read_since(log_path(data_dir), offset):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def case_c1(work: Path, blob: bytes) -> None:
+    """自己拉起的引擎：关窗口应当把它一起关掉，不留孤儿。"""
+    print("\nC1 段：首次启动（spawn）→ 点 × 关窗口 → 引擎应随之退出")
+    data_dir = work / "c1"
+    data_dir.mkdir()
+    proc: subprocess.Popen[bytes] | None = None
+    try:
+        proc, offset = start_shell(data_dir)
+        ready = wait_shell_ready(data_dir, offset, proc)
+        if not expect(ready is not None, "C1 壳起来且前端取到数据"):
+            return
+
+        decision = wait_in_log(DECISION_RE, data_dir, offset, None, timeout=5.0)
+        first_pid = int(decision.group(3)) if decision and decision.group(3) else None
+        if not expect(decision is not None and decision.group(1) == "spawn",
+                      f"C1 首次启动决策是 spawn（实际 "
+                      f"{decision.group(1) if decision else '?'}）"):
+            return
+        if not expect(first_pid is not None, "C1 日志里拿到了引擎 pid"):
+            return
+
+        endpoint = wait_endpoint(data_dir)
+        if not expect(endpoint is not None, "C1 读到了引擎端点"):
+            return
+        spawned_engines.append({**endpoint, "pid": first_pid})
+        if not add_one_torrent(endpoint, blob):
+            return
+        before = wait_torrents(endpoint, 1)
+        if not expect(len(before) == 1, f"C1 列表里有 1 条任务（实际 {len(before)}）"):
+            return
+        before_hash = before[0].get("infohash", "")
+
+        # ---- 点 ×
+        if not graceful_close(proc.pid, "壳"):
+            return
+        try:
+            proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            print("  · 优雅关闭后壳 20 秒没退，改硬杀收尾")
+            proc.kill()
+            proc.wait(timeout=10)
+            expect(False, "C1 点 × 之后壳应当在 20 秒内退出")
+            return
+        proc = None
+
+        expect(wait_log_line(data_dir, offset, "shutdown engine ok=true"),
+               "C1 退出时向引擎发了 /shutdown 且成功（日志有 shutdown engine ok=true）")
+        expect(wait_pid_gone(first_pid), f"C1 引擎 pid={first_pid} 已退出 —— 不留孤儿")
+        expect(wait_port_closed(int(endpoint["port"])), "C1 引擎端口已关闭")
+
+        # ---- 用户再打开：引擎是新的，任务从磁盘回来
+        proc, offset2 = start_shell(data_dir)
+        ready2 = wait_shell_ready(data_dir, offset2, proc)
+        if not expect(ready2 is not None, "C1 重新打开壳正常启动"):
+            return
+        new_endpoint = wait_endpoint(data_dir)
+        if not expect(new_endpoint is not None, "C1 重开后读到了引擎端点"):
+            return
+        decision2 = wait_in_log(DECISION_RE, data_dir, offset2, None, timeout=5.0)
+        second_pid = int(decision2.group(3)) if decision2 and decision2.group(3) else None
+        spawned_engines.append({**new_endpoint, "pid": second_pid})
+        expect(decision2 is not None and decision2.group(1) != "reuse",
+               f"C1 重开决策不是 reuse（实际 "
+               f"{decision2.group(1) if decision2 else '?'}）—— 引擎确实已经退出")
+        after = wait_torrents(new_endpoint, 1)
+        expect(len(after) == 1, f"C1 关窗再开后任务还在（实际 {len(after)} 条）")
+        if after:
+            expect(after[0].get("infohash", "") == before_hash, "C1 是同一个任务（infohash 一致）")
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+
+
+def case_c2(work: Path, blob: bytes) -> None:
+    """复用别人留下的引擎：关窗口不归本次窗口管，引擎应当留下。
+
+    这就是交接清单 C34 写的「已知取舍」：留下的引擎不是缺陷，但它必须能被下一次
+    启动接手 —— 否则「留下」就变成了纯泄漏。所以这里除了断言它活着，还要再开一次
+    壳证明能 reuse 同一个 pid。
+    """
+    print("\nC2 段：接管孤儿引擎（reuse）→ 点 × 关窗口 → 引擎应留下且可再接管")
+    data_dir = work / "c2"
+    data_dir.mkdir()
+    proc: subprocess.Popen[bytes] | None = None
+    try:
+        proc, offset = start_shell(data_dir)
+        if not expect(wait_shell_ready(data_dir, offset, proc) is not None,
+                      "C2 壳起来且前端取到数据"):
+            return
+
+        decision = wait_in_log(DECISION_RE, data_dir, offset, None, timeout=5.0)
+        first_pid = int(decision.group(3)) if decision and decision.group(3) else None
+        if not expect(first_pid is not None, "C2 日志里拿到了引擎 pid"):
+            return
+
+        endpoint = wait_endpoint(data_dir)
+        if not expect(endpoint is not None, "C2 读到了引擎端点"):
+            return
+        spawned_engines.append({**endpoint, "pid": first_pid})
+        if not add_one_torrent(endpoint, blob):
+            return
+        before = wait_torrents(endpoint, 1)
+        if not expect(len(before) == 1, f"C2 列表里有 1 条任务（实际 {len(before)}）"):
+            return
+        before_hash = before[0].get("infohash", "")
+
+        # ---- 先硬杀壳，造出「引擎是别人留下的」这个前态
+        hard_kill(proc.pid, "壳")
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        proc = None
+        if not expect(port_open(int(endpoint["port"])), "C2 孤儿引擎成立（壳死了引擎还在）"):
+            return
+
+        # ---- 重开：接管，此时 decision=reuse
+        proc, offset2 = start_shell(data_dir)
+        if not expect(wait_shell_ready(data_dir, offset2, proc) is not None,
+                      "C2 重开后壳正常打开"):
+            return
+        decision2 = wait_in_log(DECISION_RE, data_dir, offset2, None, timeout=5.0)
+        if not expect(decision2 is not None and decision2.group(1) == "reuse",
+                      f"C2 重开决策是 reuse（实际 "
+                      f"{decision2.group(1) if decision2 else '?'}）"):
+            return
+
+        # ---- 点 ×
+        if not graceful_close(proc.pid, "壳"):
+            return
+        try:
+            proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            print("  · 优雅关闭后壳 20 秒没退，改硬杀收尾")
+            proc.kill()
+            proc.wait(timeout=10)
+            expect(False, "C2 点 × 之后壳应当在 20 秒内退出")
+            return
+        proc = None
+
+        expect(wait_log_line(data_dir, offset2, "engine reused, left running"),
+               "C2 退出时记了 engine reused, left running（没有偷偷去关别人的引擎）")
+        expect(pid_alive(first_pid),
+               f"C2 引擎 pid={first_pid} 仍活着 —— C34 的已知取舍：复用的引擎不归本次窗口关")
+        expect(port_open(int(endpoint["port"])), "C2 引擎端口仍开着")
+
+        # ---- 「留下」必须是能被接管的，否则等同泄漏
+        proc, offset3 = start_shell(data_dir)
+        if not expect(wait_shell_ready(data_dir, offset3, proc) is not None,
+                      "C2 第三次打开壳正常启动"):
+            return
+        decision3 = wait_in_log(DECISION_RE, data_dir, offset3, None, timeout=5.0)
+        third_pid = int(decision3.group(3)) if decision3 and decision3.group(3) else None
+        expect(decision3 is not None and decision3.group(1) == "reuse",
+               f"C2 再开一次仍是 reuse（实际 {decision3.group(1) if decision3 else '?'}）")
+        expect(third_pid == first_pid,
+               f"C2 接管的还是那个留下的引擎（pid {first_pid} → {third_pid}）")
+        expect(pid_alive(first_pid), "C2 第三次查看时引擎依然活着（没被这次退出带走）")
+        after = wait_torrents(endpoint, 1)
+        expect(len(after) == 1, f"C2 任务还在（实际 {len(after)} 条）")
+        if after:
+            expect(after[0].get("infohash", "") == before_hash, "C2 是同一个任务（infohash 一致）")
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+
+
 def main() -> int:
     if not EXE.exists():
         print(f"找不到 {EXE}")
@@ -462,6 +698,8 @@ def main() -> int:
 
         case_a(work, blob)
         case_b(work, blob)
+        case_c1(work, blob)
+        case_c2(work, blob)
     finally:
         cleanup_engines()
         shutil.rmtree(work, ignore_errors=True)
@@ -472,7 +710,8 @@ def main() -> int:
             print(f"  ✗ {problem}")
         print(f"失败 {len(problems)} 项")
         return 1
-    print("通过：任务活过了引擎猝死与壳猝死，壳能接管孤儿引擎")
+    print("通过：任务活过了引擎猝死与壳猝死；关窗口时自己拉起的引擎被关掉、"
+          "复用的引擎留下且可再接管")
     return 0
 
 

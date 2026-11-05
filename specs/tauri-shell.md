@@ -51,10 +51,18 @@ M2a 交付的前端能跑，但启动方式是「先用 `launcher.py` 打印两�
 - [AC-07] 上次被强杀留下的孤儿引擎（进程还在、`engine.lock` 还被占）能被重新接上，而不是「点图标没反应」 | 判: `python toolchain/build.py shell test --release --test restart_takeover` 退出码 0，覆盖「端点完好 → 复用同一端口且不持有 child」「引擎只是忙得没响应 → 拉起失败后回头接管（决策必须是 reuse，不能是 respawn）」「端点地址已失效 → 报可操作错误且端点文件被还原」三情形
 - [AC-08] 引擎与壳**双双**被硬杀（无收尾机会）后重开，界面正常打开且任务还在 | 判: `python desktop/tests/t_shell_restart_e2e.py` 退出码 0（A 段：起真壳 → 加任务 → `taskkill /F` 引擎 → `taskkill /F` 壳 → 重开；断言重开后前端取到首帧、任务 1 条、infohash 与状态与硬杀前一致、引擎 pid 已变即任务确实从磁盘恢复）
 - [AC-09] 壳被硬杀但引擎仍活着时，重开走复用而不是另起 | 判: `python desktop/tests/t_shell_restart_e2e.py` 退出码 0（B 段：只杀壳 → 断言引擎端口仍在 → 重开；断言决策为 `reuse`、引擎 pid 前后相同、任务仍在。与 AC-07 的区别是这条跑的是真 exe 链路，AC-07 是 Rust 内直接调 `resolve()`）
+- [AC-10] 用户点窗口关闭按钮（不是任务管理器强杀）时，**自己拉起的引擎随之退出、复用的引擎留下且能被下次启动接管** | 判: `python desktop/tests/t_shell_restart_e2e.py` 退出码 0（C1 段：`spawn` → 加任务 → `taskkill` 不带 `/F` 发 WM_CLOSE → 断言日志 `shutdown engine ok=true`、引擎 pid 消失、端口关闭、重开决策为 `spawn` 且任务仍在；C2 段：先硬杀壳造出孤儿 → 重开走 `reuse` → 关窗口 → 断言日志 `engine reused, left running`、引擎 pid 与端口仍在 → 再开一壳仍 `reuse` 同一 pid）
 
 > AC-07 与 AC-08/AC-09 各测一半，缺一不可：AC-07 在 Rust 里桩出「端点完好但探测失败」，
 > 造不出「引擎和壳一起没了」；AC-08/AC-09 走真进程，但依赖不了那么细的时序。
 > 三个都通过才说明「用户关掉再打开」这条路真的通。
+
+> AC-10 是 AC-08/AC-09 的反面：那两条全程用 `taskkill /F`（没有收尾机会），
+> 刻意避开优雅退出；AC-10 专门走 WM_CLOSE。`lib.rs` 的 `RunEvent::Exit` 在这里
+> 按决策分两条相反的支路 —— `spawn`/`respawn` 调 `/shutdown` 关掉引擎，
+> `reuse` 只写一行日志把引擎留着。两条分支写在同一个 `if/else` 里，改动一处
+> 很容易顺手「统一」另一处，而只测一条分支时另一条错了不会有任何信号
+> （两次负向验证各只让对应那段变红，已记入 evidence）。
 
 ## 不做范围
 

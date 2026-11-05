@@ -357,6 +357,13 @@ cmd = "python desktop/tests/t_shell_restart_e2e.py"
 ac = "AC-09"
 cmd = "python desktop/tests/t_shell_restart_e2e.py"
 
+# AC-10 与 AC-08/AC-09 共用同一条命令，测的是反面：那两条全程 `taskkill /F` 故意绕过
+# 收尾，这条专门走 WM_CLOSE（点 ×），因为 RunEvent::Exit 里 spawn 和 reuse 两条分支
+# 的结果完全相反（关掉引擎 / 留着引擎），只测一条时另一条错了不会有任何信号。
+[[units.tauri-shell.evidence]]
+ac = "AC-10"
+cmd = "python desktop/tests/t_shell_restart_e2e.py"
+
 [units.installer]
 tier = "T2"
 build = [
