@@ -72,6 +72,9 @@ it.skipIf(!hasEngine)('前端添加 → 任务出现在列表且状态有中文�
   expect(row.textContent ?? '').toContain(STATE_LABELS[target!.state])
   // 空列表的占位必须消失
   expect(screen.queryByText('还没有任务')).toBeNull()
+  // C16：真实引擎的正常快照不能触发黄色降级横幅。
+  // state-vocab 只证明 degraded=false；这里把 App 的条件渲染也一起锁住。
+  expect(screen.queryByText(/部分字段无法解析/)).toBeNull()
 
   await waitFor(() => {
     expect(screen.getByText('1 个任务')).toBeTruthy()

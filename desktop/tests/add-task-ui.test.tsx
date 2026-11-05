@@ -72,6 +72,20 @@ describe('对话框行为', () => {
     expect(screen.queryByTestId('magnet-input')).not.toBeNull()
   })
 
+  it('粘贴网页地址时给出针对性提示，且不发起请求', async () => {
+    const onSubmit = vi.fn(() => Promise.resolve())
+    openDialog(onSubmit)
+
+    fireEvent.change(screen.getByTestId('magnet-input'), {
+      target: { value: 'https://example.com/a.torrent' },
+    })
+    fireEvent.click(screen.getByTestId('add-submit'))
+
+    expect((await screen.findByTestId('add-error')).textContent).toContain('网页地址')
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('magnet-input')).not.toBeNull()
+  })
+
   it('合法磁力回车提交，成功后对话框关闭', async () => {
     const onSubmit = vi.fn(() => Promise.resolve())
     openDialog(onSubmit)
