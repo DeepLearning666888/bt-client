@@ -57,11 +57,17 @@ crossmachine/dist/
 artifacts/
 
 # ------------------------------------------------- 真机执行包（handoff）
-# 手写件（README.md / CHECKLIST.md / preflight.ps1）入库；
+# 手写件（README.md / preflight.ps1）入库；
 # dist/ 是把安装包、帧率包、运行库复制到一起的产物（3.3 MB），可由
 # `python toolchain/pack_handoff.py` 重建；out/ 是脚本在本机跑出来的报告。
 handoff/dist/
 handoff/out/
+
+# ------------------------------------------------- 内部工作文档（不上公共仓库）
+# 进度账本、人工验收清单、内部复盘笔记——只属于本机协作，含过程细节与未填待办
+PROGRESS.md
+overview.md
+handoff/CHECKLIST.md
 
 # 提交信息草稿（临时）
 .workbuddy/msg-*.txt
