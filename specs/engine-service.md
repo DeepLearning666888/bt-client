@@ -70,6 +70,7 @@
 - [AC-17] `/state` 的 `total_bytes` 在**已完成**的任务上必须等于真实大小，不能塌成 0；无元数据时必须如实给 0 | 判: `python engine/tests/t_total_bytes.py` 退出码 0，16 项检查（A 下载中态 `total_bytes` 等于 payload 大小且 `done_bytes=0` → B 把完整内容预置进 `save_path`、删任务重加让它自己校验到 seeding，断言 `total_bytes` 与 `done_bytes` 都等于 payload 大小且 `total_bytes >= done_bytes` → C 无元数据磁力 `has_metadata=false` 且 `total_bytes=0`）
 - [AC-18] 两个引擎之间能**真传数据**：从零开始的客户端靠 peer 拿到完整 32 MiB 并落盘，内容逐字节一致；没有 peer 时一字节都拿不到 | 判: `python engine/tests/t_local_swarm.py` 退出码 0，26 项检查（进程内 HTTP tracker 促成会合，两端都带 `--no-network` 以隔离会合途径 → A 种子端预置完整内容校验到 seeding 且向 tracker 上报 → B 下载端在独立目录加同一份种子、断言两端 `save_path` 不同 → C 采样 17+ 个中间态、`done_bytes` 序列非递减、最终等于 32 MiB → D 下载端文件逐字节等于源且 mtime 落在本次测试期间 → E 关掉两端后同样的种子等满 8 秒仍是 0 字节）
 - [AC-19] `GET /dht` 如实反映 DHT 真实状态：开启时报告运行中且 `node_id` 非全 0，`--no-network` 时必须报告未运行、桶数为 0、`node_id` 全 0（不许编一个假 ID）；DHT 诊断字段不得混进 `/state` | 判: `python engine/tests/t_dht_status.py` 退出码 0，18 项检查（A 等首份快照（≤15s），断言 `running=true`、`node_id` 是 40 位小写 hex 且非全 0、`buckets>=1`（证明不只是开关打开了，内部路由表结构真的建起来了）、`routing_table_nodes`/`replacements`/`active_requests` 是非负整数、`ts_ms` 落在近 60 秒内（快照是活的）→ B `/state` 顶层不含 `dht`/`dht_nodes`/`dht_routing_table`/`node_id`，`nat` 块里也不夹带 → C `--no-network` 下 `running=false`、`buckets=0`、`node_id` 全 0）
+- [AC-20] 空闲时 `/state` 的 `seq` 必须恒定，`?since=N` 才真的能省掉重绘；同时 `nat.sampled_seconds` 仍要在涨（否则「seq 不变」可能只是引擎卡死），任务列表变动时 `seq` 必须跟着变 | 判: `python engine/tests/t_state_seq.py` 退出码 0，33 项检查（A 空载 12 拍 × 0.5s，`seq` 全程恒定为 1 → A2 拿住 3 秒前的 `seq` 再问，仍必须回 `unchanged:true`，且 `seq` 没变（这才是前端 10Hz 轮询的真实用法：A 段每拍重取当前 `seq`，两请求只隔几毫秒，落在同一个 100ms 重建窗口里，**旧实现下也全绿**，测不出失效）→ B 同一时段 `nat.sampled_seconds` 涨 ≥2 秒（反向对照）→ E `unchanged` 响应体 < 100 字节且不含 `torrents` → C 加任务后 `seq` 递增、用旧 `seq` 拿到的是全量 → D 删任务后 `seq` 再次递增、列表归零、不带 `since` 时 `nat` 仍是完整体（AC-12 契约不变））
 
 ## 不做范围
 
@@ -135,15 +136,19 @@
   与上面查到的 DNS 污染一致。
   仍未验的仍是同一条：**换一个 DHT 可达的网络，验证引擎的 DHT 实现本身能不能用**。
   本机无论如何都验不了。
-- **`/state` 的 `seq` 空载时也每秒都在涨，「内容没变就不涨」的设计意图是失效的。**
-  实测空载连续读 4 次：`seq` 为 1→3→4→5。根因是 `content` 里拼了 natdiag 的快照，
-  其中 `sampled_seconds` 每秒递增，`verdict_text` 在 15 秒内也跟着变（「只采样了
-  N 秒」）。于是前端靠 `?since=N` 跳过重绘的优化从来没生效过。
-  影响有限（空载时列表本来就空、有任务时本来就在变），**本轮未修**：要修得决定
-  「`sampled_seconds` 该不该参与变化判定」，而它是 natdiag 的对外契约字段，动它
-  要连带改那一侧。解锁条件：开始做界面性能相关的工作时，或 natdiag 规格要大改时。
-  记在这里是因为它已经骗过我一次 —— 写 AC-19 时我拿「空闲 seq 不变」当判据，
-  测试直接红了，才发现前提是假的。
+- **（2026-11-05 已修，AC-20）`/state` 的 `seq` 空载时也每秒都在涨，`?since=N` 的优化从未生效。**
+  实测空载连续读 4 次：`seq` 为 1→3→4→5。根因是判定式写成 `list + "|" + nat`，
+  而 nat 里 `sampled_seconds` 每秒递增、`verdict_text` 在 15 秒内也会变（「只采样了
+  N 秒」）。前端每 100ms 收到全量快照并整树重渲，**没有任何报错** —— 静默失效。
+  修法**不需要动 natdiag 的对外契约**（上一轮判断「要动」是错的）：把 nat 从判定式里
+  摘出去，`seq` 只由任务列表决定；nat 仍按每次请求现算并写进响应，AC-12 契约不变。
+  实测空载 12 拍 `seq` 恒定为 1，同期 `nat.sampled_seconds` 从 1 涨到 6（反向对照，
+  证明引擎没卡住，跳过的确实只是 nat 的噪声）；3 秒后拿旧 `seq` 仍回 `unchanged`。
+  这条已经骗过我一次 —— 写 AC-19 时我拿「空闲 seq 不变」当判据，测试直接红了，
+  才发现前提是假的。**现在那个断言可以写了**，AC-19 里那句限制已同步删掉。
+  补测时还发现第二层陷阱：A 段最初每拍重取当前 `seq` 再问，两个请求只隔几毫秒、
+  落在同一个 100ms 重建窗口里，**旧实现下也 12/12 全绿**。加了 A2（拿住 3 秒前的
+  `seq` 再问）才真正变红 —— 判据得按「前端怎么用」写，不是按「接口怎么调」写。
 - **（2026-11-05 已验，AC-18）两个引擎之间能真传数据。** 在此之前所有测试都是零 peer
   的：种子自己造、校验走本地磁盘、progress 要么 0 要么满，「收到别人的数据并写对」
   这件事没有任何判据碰过。现在用进程内 HTTP tracker 让两个实例会合，32 MiB 逐字节一致。

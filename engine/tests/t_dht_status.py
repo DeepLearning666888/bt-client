@@ -10,8 +10,11 @@
 但混在一起就只能写「不知道」。有了 /dht 就能一次分开。
 
 为什么不并进 /state：/state 的 seq 是对内容做比较算出来的，空闲时不变，前端据此
-跳过重绘。DHT 节点数每秒都在跳，塞进去会让空闲时也每拍重渲。C 段专门锁住这条，
+跳过重绘。DHT 节点数每秒都在跳，塞进去会让空闲时也每拍重渲。B 段专门锁住这条，
 免得以后有人图省事把它并回去。
+
+（这句话在 2026-11-05 之前其实是假的 —— 那时 seq 里还含 nat 的 sampled_seconds，
+空载也每秒在涨。AC-20 修掉之后才真正成立。）
 
 为什么不读 session::status()：整个 session_status 结构被
 `#if TORRENT_ABI_VERSION == 1` 包住，本构建是 ABI v2，那个类型不存在。
@@ -79,10 +82,10 @@ def main() -> None:
         # 没有这条，以后有人图省事把 dht_nodes 并回 /state 也能全绿 —— 而那是把
         # 一个 2 秒级的诊断信号塞进 10Hz 的界面状态契约。
         #
-        # 注意这里**不**断言「调 /dht 后 /state 的 seq 不变」。原本想这么写，实测发现
-        # 前提是假的：/state 的 content 里含 natdiag 的 sampled_seconds，它每秒递增，
-        # 所以空载时 seq 也每秒都在涨（实测 1→3→4→5）。拿一个本来就在变的量当判据，
-        # 只会写出必然失败或必然通过的断言。
+        # 这里**不**断言「seq 稳定」—— 那是 AC-20（t_state_seq.py）的职责，那边有
+        # 反向对照（nat.sampled_seconds 必须同时在涨，否则「seq 不动」可能只是引擎
+        # 卡死）。2026-11-05 之前写不了那条断言：/state 的 content 里含 nat 的
+        # sampled_seconds，空载时 seq 也每秒在涨（实测 1→3→4→5）。现在 seq 只看任务列表。
         state = engine.state()
         for key in ("dht", "dht_nodes", "dht_routing_table", "node_id"):
             c.check(key not in state,

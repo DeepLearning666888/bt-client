@@ -148,6 +148,15 @@ cmd = "python engine/tests/t_local_swarm.py"
 ac = "AC-19"
 cmd = "python engine/tests/t_dht_status.py"
 
+# 空闲时 seq 必须恒定，`?since=N` 才真的省得掉重绘。此前判定式写成 list + "|" + nat，
+# nat 里的 sampled_seconds 每秒递增把 seq 一起推着涨，这条优化从来没生效过。
+# 判据必须按「前端怎么用」写（A2 拿住 3 秒前的 seq 再问）：只按「接口怎么调」写
+# （每拍重取当前 seq）时，两个请求落在同一个 100ms 重建窗口里，旧实现也全绿。
+[[units.engine-service.evidence]]
+ac = "AC-20"
+cmd = "python engine/tests/t_state_seq.py"
+
+
 
 # ------------------------------------------------------------- M2 桌面端
 # 前端命令全部走 toolchain/build.py desktop：gate.py 用 shell=False 执行，

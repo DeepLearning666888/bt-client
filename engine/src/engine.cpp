@@ -136,7 +136,8 @@ struct Engine::Impl {
     mutable std::mutex state_mutex;
     std::uint64_t seq = 0;
     std::string state_json;
-    std::string last_content;
+    // 上一拍的**任务列表**文本，只用于判断 seq 要不要递增。刻意不含 nat（见 448 行）。
+    std::string last_list;
 
     // ---- DHT 诊断（独立于 /state，见 on_dht_stats 的注释）
     // 只由 worker 线程写；dht_json 受 state_mutex 保护给 HTTP 线程读。
@@ -443,11 +444,20 @@ struct Engine::Impl {
         namespace nd = natdiag;
         std::string nat = nd::to_json(collector.snapshot());
 
-        // seq 只在内容真的变了才递增，前端据此跳过无意义的重绘
-        std::string content = list + "|" + nat;
-        bool changed = content != last_content;
+        // seq 只由**任务列表**决定，nat 不参与判定。
+        //
+        // 原来比的是 list + "|" + nat，于是 nat 里每秒递增的 sampled_seconds 把 seq
+        // 也一起带着涨 —— 前端 10Hz 轮询每拍都收到全量快照、整棵树重渲，`?since=N`
+        // 那条「未变则零回调」的优化**从来没生效过**（实测空载 seq 1→3→4→5）。
+        //
+        // 现在：空闲时 seq 恒定，轮询真的走到 unchanged 分支；有任务在跑时
+        // rate/peers/progress 这些字段本来就在 list 里，seq 照样每秒变 —— 界面要显示
+        // 速率，这是应该的。nat 仍按每次请求现算并写进响应，只是不再参与判定：
+        // 界面不消费 nat（grep 过 desktop/src），诊断方走不带 since 的 /state 拿最新值。
+        std::string content = list;
+        bool changed = content != last_list;
         if (changed) {
-            last_content = std::move(content);
+            last_list = std::move(content);
             ++seq;
         }
 
@@ -479,9 +489,10 @@ struct Engine::Impl {
     //   2. 它只用于诊断，不被界面消费。混进「界面要渲染的状态」这份契约里，
     //      以后改 /state 结构时会被误伤。
     //
-    // 原本还有一条「避免空闲时重渲」的理由，实测不成立 —— /state 的 content 里含
-    // natdiag 的 sampled_seconds，它每秒递增，所以 seq 空载时也每秒都在涨（实测
-    // 1→3→4→5）。那条假设已删除，见 t_dht_status 里对 seq 的说明。
+    // 原本还有一条「避免空闲时重渲」的理由，当时实测不成立 —— /state 的 content
+    // 里含 natdiag 的 sampled_seconds，它每秒递增，所以 seq 空载时也每秒都在涨
+    // （实测 1→3→4→5）。**那个缺陷已经修了**（见 448 行，seq 现在只看任务列表），
+    // 这条理由重新成立，但仍不是主因：上面两条已经足够。
     //
     // 为什么不用 session::status()：整个 session_status 结构被
     // `#if TORRENT_ABI_VERSION == 1` 包住，本构建是 ABI v2，那个类型根本不存在
