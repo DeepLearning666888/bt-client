@@ -156,6 +156,14 @@ cmd = "python engine/tests/t_dht_status.py"
 ac = "AC-20"
 cmd = "python engine/tests/t_state_seq.py"
 
+# AC-20 只证明了「静止时 seq 不动」——那是必要条件。把 seq 冻成常量、或者传输时
+# 压根不更新列表，AC-20 照样全绿。这条补另一半：真 peer 传的时候必须动、传完必须
+# 静下来。32 MiB 在本地回环只跑 0.54 秒、撞上 5 个 100ms 快照窗口，所以「至少几次
+# 更新」按实测下限定，不是按"前端 10Hz 跑 10 秒"估。
+[[units.engine-service.evidence]]
+ac = "AC-21"
+cmd = "python engine/tests/t_poll_updates.py"
+
 
 
 # ------------------------------------------------------------- M2 桌面端
