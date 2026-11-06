@@ -68,6 +68,8 @@ handoff/out/
 PROGRESS.md
 overview.md
 handoff/CHECKLIST.md
+handoff/AI-HANDOFF.md
+handoff/MANUAL-VERIFICATION.md
 # 本工作区 AI 协作规则（含内部教训，不对公众）
 AGENTS.md
 
@@ -75,4 +77,6 @@ AGENTS.md
 .workbuddy/msg-*.txt
 # 工作区内部记忆（含私有路径、本机 IP，绝不上公共仓库）
 .workbuddy/memory/
+# 交付门禁证据（gate.py 生成，内部核对用，不上公共仓库）
+evidence
 *.obj
