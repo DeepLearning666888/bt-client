@@ -174,7 +174,60 @@ def bundle_target(rest: list[str]) -> int:
     cmd = [str(node), str(cli), "build", "--no-bundle" if "--no-bundle" in rest else ""]
     cmd = [part for part in cmd if part]
     print("[tauri]", " ".join(cmd[2:]))
-    return subprocess.run(cmd, cwd=str(app), env=env).returncode
+    rc = subprocess.run(cmd, cwd=str(app), env=env).returncode
+    if rc != 0 or "--no-bundle" in rest:
+        return rc
+    # tauri 直接出的包记录源文件 mtime（AC-01 不可复现的根因），重打一次
+    return repack_deterministic(app, env)
+
+
+def repack_deterministic(app: Path, env: dict[str, str]) -> int:
+    """用 `SetDateSave off` 重打 NSIS 安装包，保证产物字节可复现。
+
+    AC-01 要求「同输入重打包，两次哈希一致」。tauri 调 makensis 时不带
+    SetDateSave，NSIS 数据块默认把源文件 mtime 写进安装包；而每次构建后
+    输入文件的 mtime 都被刷新（cargo 重新链接 shell.exe、tauri 重新生成
+    installer.nsi 等四份脚本），solid LZMA 压缩流随之一字节变、整包哈希变。
+
+    这里的做法：tauri 出包后，用 makensis 的 -X 选项在脚本处理前注入
+    `SetDateSave off`，重跑同一份 installer.nsi，用结果覆盖 tauri 的包。
+    数据块不再记录 mtime，只要输入文件字节一致，输出字节就一致。
+    """
+    nsis_x64 = app / "src-tauri" / "target" / "release" / "nsis" / "x64"
+    script = nsis_x64 / "installer.nsi"
+    bundle_dir = app / "src-tauri" / "target" / "release" / "bundle" / "nsis"
+    if not script.exists() or not bundle_dir.exists():
+        print(f"找不到 {script} 或 {bundle_dir}，跳过确定性重打包")
+        return 4
+
+    candidates = []
+    if os.environ.get("TAURI_MAKENSIS"):
+        candidates.append(Path(os.environ["TAURI_MAKENSIS"]))
+    candidates.append(Path.home() / "AppData" / "Local" / "tauri" / "NSIS" / "makensis.exe")
+    which = shutil.which("makensis")
+    if which:
+        candidates.append(Path(which))
+    makensis = next((p for p in candidates if p.exists() and p.is_file()), None)
+    if makensis is None:
+        print("找不到 makensis.exe（本机安装在 Tauri 的 NSIS 目录），跳过确定性重打包")
+        return 4
+
+    cmd = [str(makensis), "-INPUTCHARSET", "UTF8", "-OUTPUTCHARSET", "UTF8",
+           "-V3", "-XSetDateSave off", str(script)]
+    print("[makensis]", " ".join(cmd[1:]))
+    rc = subprocess.run(cmd, cwd=str(nsis_x64), env=env).returncode
+    if rc != 0:
+        print("确定性重打包失败，保留 tauri 原包")
+        return rc
+
+    out = nsis_x64 / "nsis-output.exe"
+    setups = sorted(p for p in bundle_dir.glob("*.exe") if p.name.endswith("setup.exe"))
+    if not out.exists() or len(setups) != 1:
+        print(f"产物定位异常（out={out.exists()} setups={len(setups)}），保留 tauri 原包")
+        return 4
+    shutil.copyfile(out, setups[0])
+    print(f"[repack] 已用 SetDateSave off 产物覆盖 {setups[0].name}")
+    return 0
 
 
 
